@@ -1,15 +1,16 @@
 """
-MNQ Bot - SINGLE FILE for PythonAnywhere.
-Save this file in: /home/YOUR_USERNAME/nasdaq100bott/mnq_bot/run_bot_pa.py
+MNQ Bot - ONE FILE. Click "Run" = Reload the web app (see below).
 
-In Web tab → WSGI configuration file: replace content with only this (2 lines):
-  import sys
-  sys.path.insert(0, '/home/ahazm3333/nasdaq100bott/mnq_bot')
-  from run_bot_pa import application
+HOW TO START THE BOT (PythonAnywhere):
+  1. Web tab → your web app
+  2. Click the green "Reload" button
+  That's it. The bot is now running (this file is the app).
 
-Then Reload the web app. Bot is running.
-Set env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET.
-Schedule every minute: https://ahazm3333.pythonanywhere.com/cron/scan?secret=YOUR_CRON_SECRET
+First-time setup:
+  - WSGI file content:  sys.path.insert(0, '/home/YOUR_USERNAME/nasdaq100bott/mnq_bot')
+                        from run_bot_pa import application
+  - Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET
+  - Task every minute: https://YOUR_USERNAME.pythonanywhere.com/cron/scan?secret=CRON_SECRET
 """
 from __future__ import annotations
 
@@ -93,3 +94,7 @@ def index():
 
 # WSGI expects "application"
 application = app
+
+if __name__ == "__main__":
+    # Run locally: python run_bot_pa.py (on PythonAnywhere use Web tab Reload instead)
+    application.run(host="0.0.0.0", port=5000)

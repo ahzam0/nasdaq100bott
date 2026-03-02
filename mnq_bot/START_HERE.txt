@@ -1,0 +1,26 @@
+================================================================================
+  ONE FILE TO RUN THE BOT:  run_bot_pa.py
+================================================================================
+
+On PythonAnywhere there is no "Run" button for a file. The way you START the
+bot is:
+
+    Web tab  →  open your web app  →  click the green "Reload" button
+
+After Reload, the bot is running. That is your "Run" action.
+
+----------------------------------------------------------------------
+One-time setup (if not done yet)
+----------------------------------------------------------------------
+1. WSGI configuration file: put this in it (change YOUR_USERNAME):
+     import sys
+     sys.path.insert(0, '/home/YOUR_USERNAME/nasdaq100bott/mnq_bot')
+     from run_bot_pa import application
+
+2. Web app → Environment variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET
+
+3. Tasks tab → every minute: https://YOUR_USERNAME.pythonanywhere.com/cron/scan?secret=YOUR_CRON_SECRET
+
+----------------------------------------------------------------------
+To start the bot: Web tab → Reload.
+================================================================================
