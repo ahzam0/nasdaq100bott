@@ -1,0 +1,4 @@
+# Local run script (may contain secrets – do not commit)
+run_bot.ps1
+.env
+*.local

@@ -1,0 +1,29 @@
+---
+description: MNQ Riley Coleman strategy – remember this strategy's rules and tuned settings
+alwaysApply: true
+---
+
+# MNQ Riley Coleman Strategy (Remember)
+
+This project implements the **Riley Coleman–style price-action reversal strategy** on **Micro E-mini NASDAQ-100 (MNQ)**.
+
+## Core idea
+- Trade **reversal setups** at **key levels** (swing highs/lows, round numbers) in the **7:00–11:00 EST** session.
+- **Retest Reversal** only (no Failed Breakout) – config: `RETEST_ONLY = True`, `REQUIRE_TREND_ONLY = True`.
+- Entry on **1m** reversal candle (bullish/bearish engulfing, pin bars) at levels; **15m** used for trend and structure.
+
+## Key config (kept for low drawdown)
+- **MAX_RISK_PTS = 100.0** – cap stop distance in points; limits loss per trade and keeps max drawdown low (~1% in 3mo backtest). Do not remove or set to None without good reason.
+- **LEVEL_TOLERANCE_PTS = 4.0**, **MIN_RR_RATIO = 2.0**, **MAX_TRADES_PER_DAY = 3**.
+- **Risk per trade**: $330 (config) or override with `--risk` in backtest.
+
+## Real backtest data (3-month, Yahoo NQ=F, 7–11 EST)
+- Initial $50,000 → Final $55,225.25 | Net P&L +$5,225.25 (+10.45%)
+- Trades: 17 (14 W / 3 L) | Win rate 82.4% | Profit factor 10.17
+- Max drawdown: $570 (1.02%) | Avg R per trade: 0.24R
+- This is the official real backtest reference; see `BACKTEST_3M_RESULT.md` and `STRATEGY.md`.
+
+## Entry points
+- `main.py` – live bot; `run_backtest.py` – backtest; `config.py` – strategy/config; `strategy/` – key_levels, setups, entry_checklist, trade_manager; `backtest/engine.py` – backtest engine.
+
+When changing strategy logic, config, or backtest defaults, preserve the intent of **low drawdown** and **retest-only reversals** at key levels.

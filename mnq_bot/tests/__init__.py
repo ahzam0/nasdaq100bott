@@ -1,0 +1,1 @@
+# MNQ Bot test suite

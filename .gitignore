@@ -1,0 +1,17 @@
+# Secrets and local config
+.env
+*.local
+.env.*
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+# IDE
+.idea/
+.vscode/
+*.swp
+# Logs and data (optional – remove if you want to track)
+mnq_bot/logs/*.log
+mnq_bot/data/bot_state.json

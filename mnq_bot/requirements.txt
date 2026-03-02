@@ -1,0 +1,37 @@
+# MNQ Trading Bot – Riley Coleman Strategy
+# Python 3.10+
+
+# Telegram
+python-telegram-bot>=20.0,<21.0
+
+# Data & analysis
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance>=0.2.0
+
+# Scheduling
+APScheduler>=3.10.0
+
+# Broker / market data (optional – use as needed)
+# ib_insync>=0.9.86
+# requests>=2.28.0
+# alpaca-trade-api>=3.0.0
+
+# HTTP
+requests>=2.28.0
+beautifulsoup4>=4.12.0
+
+# Price API server (optional – for local price API)
+flask>=3.0.0
+
+# Tradovate real-time (delay-free) market data
+websocket-client>=1.6.0
+
+# Database (optional – for state persistence)
+# SQLite is built-in
+
+# Timezone
+pytz>=2023.3
+
+# Env loading (optional)
+python-dotenv>=1.0.0
