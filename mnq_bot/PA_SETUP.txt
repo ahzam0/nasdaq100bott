@@ -1,0 +1,62 @@
+================================================================================
+PYTHONANYWHERE – Single file to "start" the bot
+================================================================================
+
+The bot runs as a WEB APP. You don't run "main.py". You use this one file so
+the Web app serves /webhook and /cron/scan.
+
+--------------------------------------------------------------------------------
+STEP 1: WSGI configuration (fixes 404)
+--------------------------------------------------------------------------------
+
+1. Open PythonAnywhere Dashboard → Web tab.
+2. Click on the "WSGI configuration file" link (e.g. something like
+   /var/www/ahazm3333_pythonanywhere_com_wsgi.py).
+3. REPLACE the entire content of that file with the following (change
+   ahazm3333 to your username if different):
+
+--- paste from here ---
+import sys
+path = '/home/ahazm3333/nasdaq100bott/mnq_bot'
+if path not in sys.path:
+    sys.path.insert(0, path)
+
+import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join(path, '.env'))
+
+from run_bot_pa import application
+--- paste to here ---
+
+4. Save the file.
+5. Back on the Web tab, click the green "Reload" button.
+
+After reload, the bot is "started":
+  - https://ahazm3333.pythonanywhere.com/         → "MNQ Bot webhook is running..."
+  - https://ahazm3333.pythonanywhere.com/webhook → used by Telegram (POST)
+  - https://ahazm3333.pythonanywhere.com/cron/scan?secret=YOUR_CRON_SECRET → for Tasks
+
+--------------------------------------------------------------------------------
+STEP 2: Environment variables (Web tab)
+--------------------------------------------------------------------------------
+
+In the same Web app, add:
+  TELEGRAM_BOT_TOKEN  = your bot token
+  TELEGRAM_CHAT_ID    = your chat id
+  CRON_SECRET         = any random string (e.g. mySecret123)
+
+--------------------------------------------------------------------------------
+STEP 3: Scheduled task (every minute)
+--------------------------------------------------------------------------------
+
+Tasks tab → Add a new task:
+  URL: https://ahazm3333.pythonanywhere.com/cron/scan?secret=mySecret123
+  (use the same CRON_SECRET you set above)
+  Schedule: every minute
+
+--------------------------------------------------------------------------------
+The single file that starts the bot is run_bot_pa.py. It contains the webhook
+and cron logic. Keep the rest of the repo (config, bot, main, etc.) in the
+same folder so imports work.
+
+================================================================================
