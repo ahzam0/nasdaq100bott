@@ -29,6 +29,14 @@ try:
 except ImportError:
     pass
 
+# Fallbacks so bot works on PythonAnywhere without setting env in dashboard (override with env if you prefer)
+if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+    os.environ["TELEGRAM_BOT_TOKEN"] = "8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY"
+if not os.environ.get("TELEGRAM_CHAT_ID"):
+    os.environ["TELEGRAM_CHAT_ID"] = "8309667442"
+if not os.environ.get("CRON_SECRET"):
+    os.environ["CRON_SECRET"] = "mnqbotcron123"
+
 from flask import Flask, request, Response
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from bot import register_commands
