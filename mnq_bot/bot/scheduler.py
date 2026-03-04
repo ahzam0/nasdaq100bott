@@ -27,7 +27,7 @@ def now_est() -> datetime:
 
 
 def in_scan_window() -> bool:
-    """True if current time (EST) is within 7:00–11:00 scan window."""
+    """True if current time (EST) is within scan window (default 7:00–11:00 AM EST)."""
     t = now_est().time()
     start = time(int(PREMARKET_START.split(":")[0]), int(PREMARKET_START.split(":")[1]))
     end = time(int(RTH_END.split(":")[0]), int(RTH_END.split(":")[1]))

@@ -9,7 +9,8 @@ import html
 import logging
 import sys
 import threading
-from datetime import time
+import warnings
+from datetime import time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -36,6 +37,7 @@ from config import (
     MIN_BODY_PTS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
+    SHOW_SCAN_STATUS,
     TRAIL_ALERTS_ENABLED,
     TRAIL_MODE,
     TARGET_MIN_TRADES_PER_DAY,
@@ -71,7 +73,9 @@ from bot import (
 from broker import get_broker
 from utils import setup_logging, log_trade, contracts_from_risk
 
+from telegram.error import Conflict
 from telegram.ext import Application, ContextTypes
+from telegram.warnings import PTBUserWarning
 
 logger = logging.getLogger(__name__)
 EST = ZoneInfo("America/New_York")
@@ -114,6 +118,10 @@ async def _record_scan_failure(state: dict, bot, reason: str) -> None:
         await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
 
 
+# Throttle "outside session" status to once per 15 min so Telegram isn't spammed
+OUTSIDE_SESSION_STATUS_INTERVAL_MIN = 15
+
+
 async def run_scan(bot=None):
     """Fetch data, detect setup, validate checklist, send alert and optionally execute."""
     if not bot or not TELEGRAM_CHAT_ID:
@@ -121,8 +129,22 @@ async def run_scan(bot=None):
     state = get_state()
     if not state.get("scan_active", True):
         return
+    now = now_est()
+
     if not in_scan_window():
+        # Outside session: send a visible "bot running" status (throttled)
+        if SHOW_SCAN_STATUS:
+            last = state.get("last_idle_status_sent")
+            if last is None or (now - last) >= timedelta(minutes=OUTSIDE_SESSION_STATUS_INTERVAL_MIN):
+                await send_telegram(
+                    f"⏸ <b>Bot running</b> │ Scan session <code>7:00–11:00 AM EST</code>. "
+                    f"Next scan when in session.",
+                    bot,
+                    TELEGRAM_CHAT_ID,
+                )
+                state["last_idle_status_sent"] = now
         return
+
     if state["trades_today"] >= MAX_TRADES_PER_DAY:
         return
     if state.get("daily_pnl", 0) <= -MAX_DAILY_LOSS_USD:
@@ -137,6 +159,12 @@ async def run_scan(bot=None):
 
     feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
     if not feed.is_connected():
+        if SHOW_SCAN_STATUS:
+            await send_telegram(
+                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Feed not connected. Check /apis.",
+                bot,
+                TELEGRAM_CHAT_ID,
+            )
         _record_scan_failure(state, bot, "Feed not connected")
         return
     try:
@@ -144,20 +172,33 @@ async def run_scan(bot=None):
         df_15m = feed.get_15m_candles(50)
     except Exception as e:
         logger.warning("Feed error: %s", e)
+        if SHOW_SCAN_STATUS:
+            await send_telegram(
+                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Error: {html.escape(str(e))}",
+                bot,
+                TELEGRAM_CHAT_ID,
+            )
         _record_scan_failure(state, bot, str(e))
         return
     if df_1m.empty or df_15m.empty:
+        if SHOW_SCAN_STATUS:
+            await send_telegram(
+                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ No candle data (try during 7:00–11:00 AM EST).",
+                bot,
+                TELEGRAM_CHAT_ID,
+            )
         _record_scan_failure(state, bot, "No candle data")
         return
 
     state["consecutive_scan_failures"] = 0
     state["scan_failure_alert_sent"] = False
-    now = now_est()
     key_levels = build_key_levels(df_15m, df_1m, now)
     state["key_levels_text"] = _format_levels(key_levels)
 
     swing_highs, swing_lows = swing_highs_lows(df_15m)
     trend = trend_from_structure(df_15m, swing_highs, swing_lows)
+    current_price = feed.get_current_price()
+
     setup = detect_setup(
         df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
         level_tolerance_pts=LEVEL_TOLERANCE_PTS,
@@ -166,10 +207,12 @@ async def run_scan(bot=None):
         min_body_pts=MIN_BODY_PTS,
     )
     if setup is None:
+        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup")
         return
 
     risk_pts = abs(setup.entry_price - setup.stop_price)
     if MAX_RISK_PTS is not None and risk_pts > MAX_RISK_PTS:
+        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup (stop too wide)")
         return  # Skip wide-stop setups (match backtest; keeps DD low)
 
     # Minimum 1 trade/day: after 10:30 EST if 0 trades, use slightly relaxed min R:R (still quality)
@@ -197,6 +240,7 @@ async def run_scan(bot=None):
     )
     if not result.valid:
         logger.info("Entry rejected: %s", result.reason)
+        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"Rejected: {result.reason}")
         return
 
     contracts = contracts_from_risk(state["risk_per_trade"], risk_pts)
@@ -258,13 +302,26 @@ def get_levels_on_demand() -> tuple[str | None, str]:
         df_1m = feed.get_1m_candles(100)
         df_15m = feed.get_15m_candles(50)
         if df_1m is None or df_15m is None or df_1m.empty or df_15m.empty:
-            return None, "No 1m/15m candle data. Try during US session (7–11 AM EST) or set MNQ_PRICE_API_URL."
+            return None, "No 1m/15m candle data. Try during US session (7:00–11:00 AM EST) or set MNQ_PRICE_API_URL."
         now = now_est()
         key_levels = build_key_levels(df_15m, df_1m, now)
         return _format_levels(key_levels), ""
     except Exception as e:
         logger.debug("get_levels_on_demand failed: %s", e)
         return None, str(e) or "Unknown error"
+
+
+def _count_levels(kl) -> int:
+    """Number of key levels currently available (for status line)."""
+    n = 0
+    if kl.prev_day_high is not None: n += 1
+    if kl.prev_day_low is not None: n += 1
+    if kl.prev_day_close is not None: n += 1
+    if kl.seven_am_high is not None: n += 1
+    if kl.seven_am_low is not None: n += 1
+    if kl.session_open_high is not None: n += 1
+    if kl.session_open_low is not None: n += 1
+    return n
 
 
 def _format_levels(kl) -> str:
@@ -284,6 +341,29 @@ def _format_levels(kl) -> str:
     if kl.session_open_low is not None:
         lines.append(f"Session OR L: {kl.session_open_low:,.2f}")
     return "\n".join(lines) if len(lines) > 1 else "No levels yet."
+
+
+async def _send_scan_status(
+    bot,
+    now,
+    key_levels,
+    trend,
+    current_price: float | None,
+    trades_today: int,
+    reason: str,
+) -> None:
+    """Send a one-line scan status to Telegram so users see what the bot is doing."""
+    if not SHOW_SCAN_STATUS or not bot or not TELEGRAM_CHAT_ID:
+        return
+    time_est = now.strftime("%I:%M %p EST")
+    price_str = f"{current_price:,.2f}" if current_price is not None else "—"
+    level_count = _count_levels(key_levels)
+    msg = (
+        f"🔍 <b>Scan</b> {time_est} │ NQ <code>{price_str}</code> │ "
+        f"15m <code>{trend.value}</code> │ Levels: {level_count} │ "
+        f"{reason} │ Trades: {trades_today}/{MAX_TRADES_PER_DAY}"
+    )
+    await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
 
 
 async def run_trailing(bot=None):
@@ -432,18 +512,31 @@ async def retrain_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Auto-retrain started in background (runs weekly).")
 
 
+async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors: log Conflict as a short warning, others with full traceback."""
+    if isinstance(context.error, Conflict):
+        logger.warning(
+            "Telegram Conflict: another bot instance is using getUpdates. "
+            "Stop the other instance (e.g. PythonAnywhere or another terminal). Bot will retry."
+        )
+        return
+    logger.exception("Update %s caused error: %s", update, context.error)
+
+
 def main():
     setup_logging()
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (env or config) to run the bot.")
         sys.exit(1)
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_error_handler(_error_handler)
     register_commands(app)
     # Scan + trailing every 60 seconds; daily summary at 11:00 AM EST
     app.job_queue.run_repeating(scan_job, interval=60)
     app.job_queue.run_daily(daily_summary_job, time=time(11, 0, tzinfo=EST))
-    # Auto-retrain weekly (e.g. Sunday 8 PM EST); runs in background thread
+    # Auto-retrain weekly (e.g. Sunday 8 PM EST); runs in background thread (PTB v20+ days=cron: 0=Sun..6=Sat)
     if AUTO_RETRAIN_ENABLED and app.job_queue:
+        warnings.filterwarnings("ignore", category=PTBUserWarning, message=".*days.*cron.*")
         app.job_queue.run_daily(
             retrain_job,
             time=time(RETRAIN_HOUR_EST, RETRAIN_MINUTE_EST, tzinfo=EST),

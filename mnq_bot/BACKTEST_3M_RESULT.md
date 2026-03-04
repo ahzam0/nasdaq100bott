@@ -19,3 +19,23 @@
 **Tuned for improved stats:** risk $380, level_tol 8, 350pt cap. Run `python optimize_stats.py` for full param sweep.
 
 **Alternative presets:** `MAX_RISK_PTS = 200` + MIN_RR 1.85, MIN_BODY 1, SKIP_FIRST 5 → ~33 trades, 2.20% DD; with `--use-orderflow-proxy` → 38 trades, +$16,676, 60.5% WR.
+
+---
+
+### Getting 40%+ (or best possible) on *current* data
+
+The +44% result above was on a **specific 60-day window** (Yahoo 15m = last 60 days at the time). The **same parameters** on today’s “last 60 days” can give a different return (e.g. ~11%) because the market period changed.
+
+To aim for **at least 40%** (or the best return possible) on the **current** data:
+
+1. **Run the optimizer** (a few minutes):
+   ```bash
+   python optimize_40pct.py --workers 1 --rounds 2 --combos 100 --months 3
+   ```
+2. **Apply the suggested parameters** from `optimized_config_snippet.txt` into `config.py` (overwrite the matching variables).
+3. **Re-run the backtest** to confirm:
+   ```bash
+   python run_backtest.py --live --months 3 --risk 380
+   ```
+
+If no combo hits 40% on current data, the optimizer still writes the **best combo** it found (e.g. highest return with good win rate). Use that for the best achievable result on the current period.

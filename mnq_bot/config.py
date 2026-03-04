@@ -25,39 +25,38 @@ BOT_STATE_JSON = BASE_DIR / "data" / "bot_state.json"  # Persist risk, contracts
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip() or None
 
-# Trading (~$200/day target on $50k; risk $370/trade for higher profit)
+# Trading – previous strategy (~40% monthly return, BACKTEST_3M_RESULT.md)
 INSTRUMENT = "MNQ"
 TICK_VALUE_USD = 2.0  # 1 point = $2/contract on MNQ
-MAX_RISK_PER_TRADE_USD = 380
+MAX_RISK_PER_TRADE_USD = 420
 MAX_DAILY_LOSS_USD = 700       # Allow room for 2 full losses per day
 DEFAULT_CONTRACTS = 1
-MIN_RR_RATIO = 1.75
+MIN_RR_RATIO = 1.85
 PARTIAL_EXIT_PERCENT = 50
 SLIPPAGE_TICKS = 5  # Flag trade if fill is more than this from expected
 
-# Sessions (EST) – scan/trading window; override with MNQ_PREMARKET_START, MNQ_RTH_END in .env
+# Sessions (EST) – 7:00–11:00 scan window (previous strategy)
 PREMARKET_START = os.getenv("MNQ_PREMARKET_START", "07:00").strip()
 PREMARKET_END = "09:30"
 RTH_START = "09:30"
 RTH_END = os.getenv("MNQ_RTH_END", "11:00").strip()
 SESSION_OPENING_RANGE_MINUTES = 5  # 9:30–9:35
 SCAN_ACTIVE = True
+SHOW_SCAN_STATUS = os.getenv("MNQ_SHOW_SCAN_STATUS", "true").lower() in ("1", "true", "yes")
 DAILY_SUMMARY_HOUR = int(os.getenv("MNQ_DAILY_SUMMARY_HOUR", "11"))  # Send daily summary (EST)
 
-# Strategy (optimized; 3 trades/day for more opportunity toward $300/day)
-MAX_TRADES_PER_DAY = 3
+# Strategy – previous (Retest only, trend only, ~40% return)
+MAX_TRADES_PER_DAY = 2
 NEWS_BUFFER_MINUTES = 15
 SWING_LOOKBACK_15M = 10  # Last N candles on 15-min for swing detection
 ROUND_NUMBER_STEP = 50   # e.g. 19000, 19050, 19100
 LEVEL_TOLERANCE_PTS = 8.0
 REQUIRE_TREND_ONLY = True   # Only trade when 15m trend is Bullish/Bearish (not Ranging)
 RETEST_ONLY = True
-SKIP_FIRST_MINUTES = 0
-# Time-based filters: no LONG/SHORT in first N minutes after 9:30 AM RTH (0 = disabled)
+SKIP_FIRST_MINUTES = 5
 NO_LONG_FIRST_MINUTES_RTH = int(os.getenv("MNQ_NO_LONG_FIRST_MIN_RTH", "0"))
 NO_SHORT_FIRST_MINUTES_RTH = int(os.getenv("MNQ_NO_SHORT_FIRST_MIN_RTH", "0"))
-MIN_BODY_PTS = 0.0
-# Cap stop distance. 350 = ~47 trades, 61.7% WR, 5.18 PF, 4.41% DD, +$18,259 (3mo)
+MIN_BODY_PTS = 0.0   # Original: 51.9% WR, 35.46% return, 54 trades (3mo)
 MAX_RISK_PTS = 350.0
 
 # Minimum 1 trade per day (highly winnable): after this many minutes from 7:00 EST, if 0 trades, use relaxed min R:R once

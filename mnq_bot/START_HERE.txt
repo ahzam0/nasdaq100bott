@@ -1,26 +1,57 @@
 ================================================================================
-  ONE FILE TO RUN THE BOT:  run_bot_pa.py
+  EASIEST WAY TO RUN YOUR BOT ONLINE (PythonAnywhere – free)
 ================================================================================
 
-On PythonAnywhere there is no "Run" button for a file. The way you START the
-bot is:
+Replace YOUR_USERNAME with your PythonAnywhere username everywhere below.
 
-    Web tab  →  open your web app  →  click the green "Reload" button
+--------------------------------------------------------------------------------
+STEP 1 – Bash console: clone and install (run once)
+--------------------------------------------------------------------------------
 
-After Reload, the bot is running. That is your "Run" action.
+git clone https://github.com/ahzam0/nasdaq100bott.git
+cd nasdaq100bott/mnq_bot
+python3.10 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-----------------------------------------------------------------------
-One-time setup (if not done yet)
-----------------------------------------------------------------------
-1. WSGI configuration file: put this in it (change YOUR_USERNAME):
-     import sys
-     sys.path.insert(0, '/home/YOUR_USERNAME/nasdaq100bott/mnq_bot')
-     from run_bot_pa import application
+--------------------------------------------------------------------------------
+STEP 2 – Web tab: create app
+--------------------------------------------------------------------------------
 
-2. Web app → Environment variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET
+1. Web → Add a new web app → Flask → Python 3.10
+2. Code directory:  /home/YOUR_USERNAME/nasdaq100bott/mnq_bot
+3. Virtualenv:      /home/YOUR_USERNAME/nasdaq100bott/mnq_bot/venv
+4. Open "WSGI configuration file" and REPLACE ALL with:
 
-3. Tasks tab → every minute: https://YOUR_USERNAME.pythonanywhere.com/cron/scan?secret=YOUR_CRON_SECRET
+import sys
+sys.path.insert(0, '/home/YOUR_USERNAME/nasdaq100bott/mnq_bot')
+from run_bot_pa import application
 
-----------------------------------------------------------------------
-To start the bot: Web tab → Reload.
+5. Save, then click the green RELOAD button.
+
+--------------------------------------------------------------------------------
+STEP 3 – Bash: set Telegram webhook (run once)
+--------------------------------------------------------------------------------
+
+curl -F "url=https://YOUR_USERNAME.pythonanywhere.com/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
+
+--------------------------------------------------------------------------------
+STEP 4 – Tasks tab: scan every minute
+--------------------------------------------------------------------------------
+
+1. Tasks → Add a new task
+2. Type: Run a URL
+3. URL: https://YOUR_USERNAME.pythonanywhere.com/cron/scan?secret=mnqbotcron123
+4. Schedule: Every minute
+5. Save
+
+--------------------------------------------------------------------------------
+BONUS – Free account: whitelist (Account or Network tab)
+--------------------------------------------------------------------------------
+
+Add:  api.telegram.org
+Add:  query1.finance.yahoo.com
+
+================================================================================
+DONE. Open Telegram and send /start to your bot. Live signals 7–11 AM EST.
 ================================================================================

@@ -1,0 +1,56 @@
+================================================================================
+  OTHER EASY WAYS TO RUN YOUR BOT ONLINE
+================================================================================
+
+Option A – RUN ON YOUR PC + NGROK (no cloud account, 5 min)
+--------------------------------------------------------------------------------
+Your bot runs on your computer. Ngrok gives you a public HTTPS URL for Telegram.
+
+1. Install ngrok: https://ngrok.com/download (or: choco install ngrok)
+
+2. Start the bot (PowerShell, in mnq_bot folder):
+   $env:TELEGRAM_BOT_TOKEN="8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY"
+   $env:TELEGRAM_CHAT_ID="8309667442"
+   python run_bot_pa.py
+
+3. In another terminal, run:  ngrok http 5000
+   Copy the https://xxxx.ngrok.io URL it shows.
+
+4. Set webhook (replace URL with your ngrok URL):
+   curl -F "url=https://YOUR_NGROK_URL/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
+
+5. For "scan every minute" you have two choices:
+   - Use a free cron service (e.g. cron-job.org) to hit every minute:
+     https://YOUR_NGROK_URL/cron/scan?secret=mnqbotcron123
+   - Or keep the bot and ngrok running; Telegram commands still work.
+
+Downside: PC must stay on and ngrok running. Free ngrok URL changes each time unless you have an account.
+
+--------------------------------------------------------------------------------
+Option B – RENDER (free tier, connect GitHub)
+--------------------------------------------------------------------------------
+1. Sign up: https://render.com
+2. New → Web Service → Connect your GitHub repo (ahzam0/nasdaq100bott)
+3. Settings:
+   - Root directory: mnq_bot
+   - Build: pip install -r requirements.txt
+   - Start: gunicorn run_bot_pa:application (or use the Procfile if added)
+4. Add env vars: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET
+5. After deploy, set webhook to: https://YOUR-APP.onrender.com/webhook
+6. Use cron-job.org to call https://YOUR-APP.onrender.com/cron/scan?secret=YOUR_CRON_SECRET every minute
+
+Note: Free tier sleeps after ~15 min inactivity; the cron ping wakes it (may be slow first request).
+
+--------------------------------------------------------------------------------
+Option C – RAILWAY (free tier, connect GitHub)
+--------------------------------------------------------------------------------
+1. Sign up: https://railway.app
+2. New Project → Deploy from GitHub → select ahzam0/nasdaq100bott
+3. Set root to mnq_bot (or add Procfile in mnq_bot)
+4. Add variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET
+5. Deploy. Set webhook to: https://YOUR-APP.up.railway.app/webhook
+6. Use cron-job.org to hit /cron/scan every minute
+
+================================================================================
+RECOMMENDED: PythonAnywhere (START_HERE.txt) – no sleep, built-in cron, free.
+================================================================================
