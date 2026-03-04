@@ -311,8 +311,14 @@ async def cmd_live_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def callback_feed_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button: Yahoo WebSocket On / REST only."""
     query = update.callback_query
-    await query.answer()
-    if not query.data or query.data not in ("yahoo_ws_on", "yahoo_ws_off"):
+    if not query or not query.data:
+        return
+    # Answer immediately so Telegram stops loading and user sees feedback
+    try:
+        await query.answer(text="Updating…")
+    except Exception:
+        await query.answer()
+    if query.data not in ("yahoo_ws_on", "yahoo_ws_off"):
         return
     enabled = query.data == "yahoo_ws_on"
     try:

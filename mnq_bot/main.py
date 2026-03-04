@@ -298,12 +298,14 @@ def get_levels_on_demand() -> tuple[str | None, str]:
     """Fetch candles and build key levels on demand. Returns (levels_text, error_hint). error_hint only when levels_text is None."""
     try:
         feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
-        if not feed.is_connected():
-            return None, "Feed not connected. Check /apis or start price server."
+        # Fetch candles first (for Yahoo, connection is established when we fetch)
         df_1m = feed.get_1m_candles(100)
         df_15m = feed.get_15m_candles(50)
         if df_1m is None or df_15m is None or df_1m.empty or df_15m.empty:
-            return None, "No 1m/15m candle data. Try during US session (7:00–11:00 AM EST) or set MNQ_PRICE_API_URL."
+            hint = "No 1m/15m candle data. Try during US session (7:00–11:00 AM EST) or check /apis."
+            if not feed.is_connected():
+                hint = "Feed not connected or no data. Check /apis or set MNQ_PRICE_API_URL."
+            return None, hint
         now = now_est()
         key_levels = build_key_levels(df_15m, df_1m, now)
         return _format_levels(key_levels), ""
@@ -545,7 +547,7 @@ def main():
         )
         logger.info("Auto-retrain scheduled: day=%s %02d:%02d EST", RETRAIN_DAY_OF_WEEK, RETRAIN_HOUR_EST, RETRAIN_MINUTE_EST)
     logger.info("MNQ Bot starting – Riley Coleman strategy. Signals only %s.", SCAN_SESSION_EST)
-    app.run_polling(allowed_updates=["message"])
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
