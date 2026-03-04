@@ -28,10 +28,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip() or None
 # Trading – previous strategy (~40% monthly return, BACKTEST_3M_RESULT.md)
 INSTRUMENT = "MNQ"
 TICK_VALUE_USD = 2.0  # 1 point = $2/contract on MNQ
-MAX_RISK_PER_TRADE_USD = 380   # Original preset: ~35% / 54 trades (3mo). Override in state or env if needed.
+MAX_RISK_PER_TRADE_USD = 380
 MAX_DAILY_LOSS_USD = 700       # Allow room for 2 full losses per day
 DEFAULT_CONTRACTS = 1
-MIN_RR_RATIO = 1.8   # Original preset: 35.46% / 54 trades. Use 1.85 for slightly stricter.
+MIN_RR_RATIO = 1.8
 PARTIAL_EXIT_PERCENT = 50
 SLIPPAGE_TICKS = 5  # Flag trade if fill is more than this from expected
 
@@ -46,17 +46,17 @@ SHOW_SCAN_STATUS = os.getenv("MNQ_SHOW_SCAN_STATUS", "true").lower() in ("1", "t
 DAILY_SUMMARY_HOUR = int(os.getenv("MNQ_DAILY_SUMMARY_HOUR", "11"))  # Send daily summary (EST)
 
 # Strategy – previous (Retest only, trend only, ~40% return)
-MAX_TRADES_PER_DAY = 2
+MAX_TRADES_PER_DAY = 3
 NEWS_BUFFER_MINUTES = 15
 SWING_LOOKBACK_15M = 10  # Last N candles on 15-min for swing detection
 ROUND_NUMBER_STEP = 50   # e.g. 19000, 19050, 19100
 LEVEL_TOLERANCE_PTS = 8.0
 REQUIRE_TREND_ONLY = True   # Only trade when 15m trend is Bullish/Bearish (not Ranging)
 RETEST_ONLY = True
-SKIP_FIRST_MINUTES = 0   # Original preset: 51.9% WR, 35.46% return, 54 trades (3mo). Use 5 for fewer weak opens.
+SKIP_FIRST_MINUTES = 0
 NO_LONG_FIRST_MINUTES_RTH = int(os.getenv("MNQ_NO_LONG_FIRST_MIN_RTH", "0"))
 NO_SHORT_FIRST_MINUTES_RTH = int(os.getenv("MNQ_NO_SHORT_FIRST_MIN_RTH", "0"))
-MIN_BODY_PTS = 0.0   # Original: 51.9% WR, 35.46% return, 54 trades (3mo)
+MIN_BODY_PTS = 0.0
 MAX_RISK_PTS = 350.0
 
 # Minimum 1 trade per day (highly winnable): after this many minutes from 7:00 EST, if 0 trades, use relaxed min R:R once

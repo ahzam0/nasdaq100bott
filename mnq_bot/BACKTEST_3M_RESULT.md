@@ -1,5 +1,29 @@
 # Real Backtest Data – 3 Month (MNQ Riley Coleman)
 
+**Best on current data (this 3‑month window):**
+| Metric | Result |
+|--------|--------|
+| Total return | **+36.05%** |
+| Net P&L | +$18,024.25 |
+| Final balance | $68,024.25 |
+| Total trades | 52 (28 W / 24 L) |
+| Win rate | 53.8% |
+| Max drawdown | 3.06% |
+| Profit factor | 5.56 |
+| Avg R per trade | 0.29R |
+
+**Command:** `python run_backtest.py --live --months 3 --balance 50000 --risk 380` (config: MIN_RR_RATIO=1.8, SKIP_FIRST_MINUTES=0, LEVEL_TOLERANCE_PTS=8).
+
+**Higher win rate preset** (fewer trades, better WR): add `--use-orderflow-proxy` → ~32% return, **57.5% win rate**, 5.52 PF, 0.36R. Use when you want more consistent winners over raw return.
+
+**Improving further:** Run the full optimizer (takes ~10–15 min) to search for better params on current data:
+```bash
+python optimize_best.py --workers 1 --rounds 4 --combos 100 --months 3
+```
+Then apply `optimized_config_snippet.txt` via `python apply_optimized_config.py` and re-run the backtest.
+
+---
+
 **Target stats (original preset)** – what to aim for:
 | Metric | Target |
 |--------|--------|
