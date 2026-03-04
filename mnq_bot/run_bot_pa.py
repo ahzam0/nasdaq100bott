@@ -60,6 +60,7 @@ def get_ptb_app():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    import logging
     try:
         data = request.get_json(force=True, silent=True)
         if not data:
@@ -69,6 +70,7 @@ def webhook():
         asyncio.run(ptb.process_update(update))
         return Response("OK", status=200)
     except Exception as e:
+        logging.exception("Webhook error")
         return Response("Error", status=500)
 
 async def _run_scan_with_fresh_bot():
