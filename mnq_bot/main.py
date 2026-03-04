@@ -10,7 +10,7 @@ import logging
 import sys
 import threading
 import warnings
-from datetime import time, timedelta
+from datetime import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -121,9 +121,6 @@ async def _record_scan_failure(state: dict, bot, reason: str) -> None:
 
 
 # Throttle "outside session" status to once per 15 min so Telegram isn't spammed
-OUTSIDE_SESSION_STATUS_INTERVAL_MIN = 15
-
-
 async def run_scan(bot=None):
     """Fetch data, detect setup, validate checklist, send alert and optionally execute."""
     if not bot or not TELEGRAM_CHAT_ID:
@@ -134,17 +131,7 @@ async def run_scan(bot=None):
     now = now_est()
 
     if not in_scan_window():
-        # Outside session: send a visible "bot running" status (throttled)
-        if SHOW_SCAN_STATUS:
-            last = state.get("last_idle_status_sent")
-            if last is None or (now - last) >= timedelta(minutes=OUTSIDE_SESSION_STATUS_INTERVAL_MIN):
-                await send_telegram(
-                    f"⏸ <b>Bot running</b> │ Signals only <code>{SCAN_SESSION_EST}</code>. "
-                    f"Next scan when in session.",
-                    bot,
-                    TELEGRAM_CHAT_ID,
-                )
-                state["last_idle_status_sent"] = now
+        # Outside session: do nothing (no "Bot running" message to avoid spam)
         return
 
     if state["trades_today"] >= MAX_TRADES_PER_DAY:
