@@ -107,6 +107,50 @@ def stop_for_milestone(trade: ActiveTrade, milestone_r: float) -> float:
     return trade.suggested_stop_for_milestone(milestone_r)
 
 
+def active_trade_to_dict(t: ActiveTrade) -> dict:
+    """Serialize ActiveTrade for JSON persistence."""
+    return {
+        "direction": t.direction,
+        "entry": t.entry,
+        "stop": t.stop,
+        "target1": t.target1,
+        "target2": t.target2,
+        "contracts": t.contracts,
+        "risk_per_contract_usd": t.risk_per_contract_usd,
+        "status": t.status.value if isinstance(t.status, TradeStatus) else str(t.status),
+        "current_stop": t.current_stop,
+        "last_trailed_r": t.last_trailed_r,
+        "partial_filled": t.partial_filled,
+        "exit_price": t.exit_price,
+        "exit_reason": t.exit_reason or "",
+    }
+
+
+def active_trade_from_dict(d: dict) -> ActiveTrade:
+    """Deserialize ActiveTrade from JSON."""
+    status = TradeStatus.OPEN
+    if "status" in d and d["status"]:
+        try:
+            status = TradeStatus(d["status"])
+        except (ValueError, TypeError):
+            pass
+    return ActiveTrade(
+        direction=str(d.get("direction", "LONG")),
+        entry=float(d["entry"]),
+        stop=float(d["stop"]),
+        target1=float(d["target1"]),
+        target2=float(d["target2"]),
+        contracts=int(d.get("contracts", 1)),
+        risk_per_contract_usd=float(d.get("risk_per_contract_usd", 0)),
+        status=status,
+        current_stop=float(d.get("current_stop") or d.get("stop", 0)),
+        last_trailed_r=float(d.get("last_trailed_r", 0)),
+        partial_filled=bool(d.get("partial_filled", False)),
+        exit_price=float(d["exit_price"]) if d.get("exit_price") is not None else None,
+        exit_reason=str(d.get("exit_reason") or ""),
+    )
+
+
 def partial_exit_percent() -> int:
     return PARTIAL_EXIT_PERCENT
 

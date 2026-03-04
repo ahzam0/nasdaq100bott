@@ -69,6 +69,14 @@ By default the bot uses Yahoo REST for live price (updated every scan).
 This uses Yahoo REST only (no WebSocket), so the bot won’t hit thread limits.
 You still get live NQ price and full signals. For WebSocket: MNQ_YAHOO_WS_REALTIME=true
 
+--------------------------------------------------------------------------------
+Trade history (survives restart)
+--------------------------------------------------------------------------------
+
+Trade history, active trades, daily P&L and trades-today count are saved to:
+  mnq_bot/data/trade_data.json
+After a restart the bot loads this file so old trade history is not lost.
+
 ================================================================================
 DONE. Open Telegram and send /start to your bot.
 Live signals only during 7:00–11:00 AM EST.

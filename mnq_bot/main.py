@@ -63,6 +63,7 @@ from strategy import (
 from bot import (
     register_commands,
     get_state,
+    save_trade_state,
     format_trade_alert,
     format_trail_alert,
     format_stop_hit,
@@ -193,6 +194,7 @@ async def run_scan(bot=None):
 
     state["consecutive_scan_failures"] = 0
     state["scan_failure_alert_sent"] = False
+    state["total_scans"] = state.get("total_scans", 0) + 1
     key_levels = build_key_levels(df_15m, df_1m, now)
     state["key_levels_text"] = _format_levels(key_levels)
 
@@ -292,6 +294,7 @@ async def run_scan(bot=None):
     })
     state["trades_today"] += 1
     log_trade(setup.direction, setup.entry_price, setup.stop_price, setup.target1_price, setup.target2_price, "open", notes=setup.key_level_name)
+    save_trade_state()
 
 
 def get_levels_on_demand() -> tuple[str | None, str]:
@@ -397,6 +400,7 @@ async def run_trailing(bot=None):
             result_usd = trade.pnl_at_price(trade.current_stop)
             state["daily_pnl"] += result_usd
             state["trade_history"].append({"dir": trade.direction, "entry": trade.entry, "result": "stop", "pnl": result_usd, "date": now_est().strftime("%Y-%m-%d")})
+            save_trade_state()
             msg = format_stop_hit(trade.direction, trade.entry, trade.current_stop, result_usd / trade.contracts, "stopped", state["daily_pnl"])
             await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
             log_trade(trade.direction, trade.entry, trade.stop, trade.target1, trade.target2, "loss" if result_usd < 0 else "win", trade.current_stop, trade.rr_at_price(trade.current_stop))
@@ -406,6 +410,7 @@ async def run_trailing(bot=None):
             result_usd = trade.pnl_at_price(trade.current_stop)
             state["daily_pnl"] += result_usd
             state["trade_history"].append({"dir": trade.direction, "entry": trade.entry, "result": "stop", "pnl": result_usd, "date": now_est().strftime("%Y-%m-%d")})
+            save_trade_state()
             msg = format_stop_hit(trade.direction, trade.entry, trade.current_stop, result_usd / trade.contracts, "stopped", state["daily_pnl"])
             await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
             log_trade(trade.direction, trade.entry, trade.stop, trade.target1, trade.target2, "loss" if result_usd < 0 else "win", trade.current_stop, trade.rr_at_price(trade.current_stop))
@@ -418,6 +423,7 @@ async def run_trailing(bot=None):
             trade.current_stop = new_stop
             trade.last_trailed_r = next_m
             item["stop"] = new_stop
+            save_trade_state()
             action = f"Move Stop Loss to +{next_m}R" if next_m == 1.0 else f"Trail stop to +{next_m - 1}R"
             tip = "Take 50% off here and let the rest run!" if next_m == 2.0 else ""
             msg = format_trail_alert(
@@ -438,6 +444,8 @@ async def run_trailing(bot=None):
 
     for item in to_remove:
         state["active_trades"].remove(item)
+    if to_remove:
+        save_trade_state()
 
 
 async def daily_summary_job(context: ContextTypes.DEFAULT_TYPE):

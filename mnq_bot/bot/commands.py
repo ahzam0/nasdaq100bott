@@ -37,6 +37,7 @@ from config import (
     PRICE_API_URL,
     ORDERFLOW_API_URL,
     USE_ECONOMIC_CALENDAR,
+    TRADE_DATA_JSON,
     get_use_yahoo_ws_realtime,
     set_use_yahoo_ws_realtime,
 )
@@ -84,6 +85,80 @@ def _save_persisted_state():
     except Exception as e:
         logger.warning("Could not save bot_state.json: %s", e)
 
+
+def _load_trade_data():
+    """Load trade_history, active_trades, daily_pnl, trades_today from trade_data.json."""
+    out = {}
+    try:
+        if not TRADE_DATA_JSON or not TRADE_DATA_JSON.exists():
+            return out
+        import json
+        from strategy.trade_manager import active_trade_from_dict
+        with open(TRADE_DATA_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data.get("trade_history"), list):
+            out["trade_history"] = data["trade_history"]
+        if isinstance(data.get("daily_pnl"), (int, float)):
+            out["daily_pnl"] = float(data["daily_pnl"])
+        if isinstance(data.get("trades_today"), int):
+            out["trades_today"] = max(0, data["trades_today"])
+        if isinstance(data.get("active_trades"), list):
+            restored = []
+            for i, item in enumerate(data["active_trades"]):
+                if not isinstance(item, dict):
+                    continue
+                trade_dict = item.get("trade") if "trade" in item else item
+                if not isinstance(trade_dict, dict):
+                    continue
+                try:
+                    trade = active_trade_from_dict(trade_dict)
+                    restored.append({
+                        "trade": trade,
+                        "id": item.get("id", i + 1),
+                        "direction": trade.direction,
+                        "entry": trade.entry,
+                        "stop": trade.current_stop,
+                    })
+                except Exception as e:
+                    logger.debug("Skip restoring active_trade %s: %s", i, e)
+            out["active_trades"] = restored
+    except Exception as e:
+        logger.debug("Could not load trade_data.json: %s", e)
+    return out
+
+
+def save_trade_state():
+    """Persist trade_history, active_trades, daily_pnl, trades_today to trade_data.json. Call after any trade change."""
+    try:
+        if not TRADE_DATA_JSON:
+            return
+        TRADE_DATA_JSON.parent.mkdir(parents=True, exist_ok=True)
+        import json
+        from strategy.trade_manager import active_trade_to_dict
+        active = _bot_state.get("active_trades") or []
+        serialized_active = []
+        for item in active:
+            if isinstance(item, dict) and "trade" in item:
+                t = item["trade"]
+                serialized_active.append({
+                    "id": item.get("id"),
+                    "direction": item.get("direction"),
+                    "entry": item.get("entry"),
+                    "stop": item.get("stop"),
+                    "trade": active_trade_to_dict(t),
+                })
+        payload = {
+            "trade_history": _bot_state.get("trade_history") or [],
+            "active_trades": serialized_active,
+            "daily_pnl": _bot_state.get("daily_pnl", 0.0),
+            "trades_today": _bot_state.get("trades_today", 0),
+        }
+        with open(TRADE_DATA_JSON, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as e:
+        logger.warning("Could not save trade_data.json: %s", e)
+
+
 _bot_state = {
     "scan_active": True,
     "trail_alerts": True,
@@ -97,9 +172,13 @@ _bot_state = {
     "daily_pnl": 0.0,
     "active_trades": [],
     "trade_history": [],
+    "total_scans": 0,  # number of full scans run (incremented in main.run_scan)
 }
 # Load persisted risk/contracts
 for k, v in _load_persisted_state().items():
+    _bot_state[k] = v
+# Load persisted trade data (history + active trades + daily_pnl + trades_today)
+for k, v in _load_trade_data().items():
     _bot_state[k] = v
 
 BOT_VERSION = "1.1.0"
@@ -114,8 +193,8 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton("▶ Start"), KeyboardButton("⏸ Pause")],
-            [KeyboardButton("📊 Status"), KeyboardButton("📌 Levels")],
-            [KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
+            [KeyboardButton("📊 Status"), KeyboardButton("🔍 Scan status")],
+            [KeyboardButton("📌 Levels"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
             [KeyboardButton("📋 History"), KeyboardButton("📊 Order flow"), KeyboardButton("🔌 APIs")],
             [KeyboardButton("❓ Help")],
         ],
@@ -169,6 +248,21 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         s = t.get("stop", 0)
         lines.append(f"  • {d} @ <code>{e:,.2f}</code>  Stop <code>{s:,.2f}</code>")
     await _reply_html(update, "\n".join(lines))
+
+
+async def cmd_scan_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show whether scanning is on/off and total number of scans run."""
+    on = _bot_state.get("scan_active", True)
+    total = _bot_state.get("total_scans", 0)
+    status = "ON" if on else "OFF"
+    msg = (
+        "<b>🔍 Scan Status</b>\n"
+        "────────────────────\n"
+        f"Scanning: <b>{status}</b>\n"
+        f"Total scans run: <b><code>{total}</code></b>\n\n"
+        "Scans run only during 7:00–11:00 AM EST when scanning is ON."
+    )
+    await _reply_html(update, msg)
 
 
 def _get_apis_status_sync() -> list[str]:
@@ -717,6 +811,8 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
         await cmd_stop(update, context)
     elif text == "📊 Status":
         await cmd_status(update, context)
+    elif text == "🔍 Scan status":
+        await cmd_scan_status(update, context)
     elif text == "📌 Levels":
         await cmd_levels(update, context)
     elif text == "📈 P&L":
@@ -833,6 +929,7 @@ def register_commands(application):
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("stop", cmd_stop))
     application.add_handler(CommandHandler("status", cmd_status))
+    application.add_handler(CommandHandler("scanstatus", cmd_scan_status))
     application.add_handler(CommandHandler("levels", cmd_levels))
     application.add_handler(CommandHandler("price", cmd_live_price))
     application.add_handler(CommandHandler("pnl", cmd_pnl))

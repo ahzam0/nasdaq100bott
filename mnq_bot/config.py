@@ -20,6 +20,7 @@ LOG_DIR = BASE_DIR / "logs"
 JOURNAL_PATH = BASE_DIR / "trade_journal.csv"
 DB_PATH = BASE_DIR / "mnq_bot_state.db"
 BOT_STATE_JSON = BASE_DIR / "data" / "bot_state.json"  # Persist risk, contracts
+TRADE_DATA_JSON = BASE_DIR / "data" / "trade_data.json"  # Persist trade history, active_trades, daily_pnl (survives restart)
 
 # Telegram (use env vars in production; never commit real tokens)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
