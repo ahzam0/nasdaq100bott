@@ -259,14 +259,15 @@ def _fetch_live_price_sync() -> tuple[str, str]:
         from data import get_feed
         feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
         feed_type = type(feed).__name__
-        if not feed.is_connected():
-            return "", feed_type
+        # Get price first; for Yahoo, connection is established inside get_current_price()
         price = feed.get_current_price()
-        if price is None:
-            return "", feed_type
-        return f"{price:,.2f}", feed_type
+        if price is not None:
+            return f"{price:,.2f}", feed_type
+        # No price: show feed type and connection state so user can debug
+        conn = "connected" if feed.is_connected() else "not connected"
+        return "", f"{feed_type} ({conn})"
     except Exception as e:
-        return "", str(e)
+        return "", f"{type(e).__name__}: {e}"
 
 
 def _live_price_inline_keyboard():
@@ -296,9 +297,9 @@ async def cmd_live_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         msg = (
             f"<b>💰 {INSTRUMENT} Live Price</b>\n"
             "────────────────────\n"
-            "Feed not connected or no price.\n\n"
-            f"<i>Feed: {_esc(feed_info)}</i>\n"
-            "Tap a button to set price source:"
+            "No price available.\n\n"
+            f"<i>Feed: {_esc(feed_info)}</i>\n\n"
+            "Tap <b>⚪ REST only</b> if you're on a restricted server, then tap 💰 Live Price again."
         )
     await update.message.reply_text(
         msg,
@@ -320,17 +321,30 @@ async def callback_feed_toggle(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"❌ Error: {_esc(str(e))}", parse_mode="HTML")
         return
     status = "WebSocket (minimal delay)" if enabled else "REST only (no extra threads)"
+    # Include timestamp so Telegram accepts the edit (avoids "message not modified")
+    updated = now_est().strftime("%I:%M %p EST")
+    new_text = (
+        f"<b>💰 {INSTRUMENT} Live Price</b>\n"
+        "────────────────────\n"
+        f"✅ <b>Price source set to: {_esc(status)}</b>\n\n"
+        f"<i>Updated {_esc(updated)}</i>\n\n"
+        "Tap <b>💰 Live Price</b> again to see current price and change source."
+    )
     try:
         await query.edit_message_text(
-            f"<b>💰 {INSTRUMENT} Live Price</b>\n"
-            "────────────────────\n"
-            f"✅ <b>Price source set to: {_esc(status)}</b>\n\n"
-            "Tap <b>💰 Live Price</b> again to see current price and change source.",
+            new_text,
             parse_mode="HTML",
             reply_markup=_live_price_inline_keyboard(),
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not edit Live Price message: %s", e)
+        try:
+            await query.message.reply_text(
+                f"✅ Price source set to <b>{_esc(status)}</b>. Tap 💰 Live Price to refresh.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
