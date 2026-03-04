@@ -58,6 +58,18 @@ def get_ptb_app():
         register_commands(_ptb_app)
     return _ptb_app
 
+async def _handle_webhook_update(data: dict):
+    """Create a fresh Application, initialize it, process the update, then shutdown (required by PTB for webhook)."""
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    register_commands(app)
+    await app.initialize()
+    try:
+        update = Update.de_json(data, app.bot)
+        await app.process_update(update)
+    finally:
+        await app.shutdown()
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     import logging
@@ -65,9 +77,7 @@ def webhook():
         data = request.get_json(force=True, silent=True)
         if not data:
             return Response("Bad request", status=400)
-        ptb = get_ptb_app()
-        update = Update.de_json(data, ptb.bot)
-        asyncio.run(ptb.process_update(update))
+        asyncio.run(_handle_webhook_update(data))
         return Response("OK", status=200)
     except Exception as e:
         logging.exception("Webhook error")
