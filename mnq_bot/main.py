@@ -37,6 +37,7 @@ from config import (
     MIN_BODY_PTS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
+    TELEGRAM_CHAT_IDS,
     SHOW_SCAN_STATUS,
     TRAIL_ALERTS_ENABLED,
     TRAIL_MODE,
@@ -69,6 +70,7 @@ from bot import (
     format_stop_hit,
     format_daily_summary,
     send_telegram,
+    send_telegram_all,
     now_est,
     in_scan_window,
 )
@@ -117,13 +119,13 @@ async def _record_scan_failure(state: dict, bot, reason: str) -> None:
             f"Last reason: {html.escape(reason)}\n\n"
             "<i>Check feed, network, and session. Bot will keep retrying.</i>"
         )
-        await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
+        await send_telegram_all(msg, bot)
 
 
 # Throttle "outside session" status to once per 15 min so Telegram isn't spammed
 async def run_scan(bot=None):
     """Fetch data, detect setup, validate checklist, send alert and optionally execute."""
-    if not bot or not TELEGRAM_CHAT_ID:
+    if not bot or not TELEGRAM_CHAT_IDS:
         return
     state = get_state()
     if not state.get("scan_active", True):
@@ -137,22 +139,20 @@ async def run_scan(bot=None):
     if state["trades_today"] >= MAX_TRADES_PER_DAY:
         return
     if state.get("daily_pnl", 0) <= -MAX_DAILY_LOSS_USD:
-        await send_telegram(
+        await send_telegram_all(
             f"<b>🛑 Daily loss limit</b>\n"
             f"────────────────────\n"
             f"Limit <code>${MAX_DAILY_LOSS_USD}</code> reached. Trading paused.",
             bot,
-            TELEGRAM_CHAT_ID,
         )
         return
 
     feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
     if not feed.is_connected():
         if SHOW_SCAN_STATUS:
-            await send_telegram(
+            await send_telegram_all(
                 f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Feed not connected. Check /apis.",
                 bot,
-                TELEGRAM_CHAT_ID,
             )
         _record_scan_failure(state, bot, "Feed not connected")
         return
@@ -162,19 +162,17 @@ async def run_scan(bot=None):
     except Exception as e:
         logger.warning("Feed error: %s", e)
         if SHOW_SCAN_STATUS:
-            await send_telegram(
+            await send_telegram_all(
                 f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Error: {html.escape(str(e))}",
                 bot,
-                TELEGRAM_CHAT_ID,
             )
         _record_scan_failure(state, bot, str(e))
         return
     if df_1m.empty or df_15m.empty:
         if SHOW_SCAN_STATUS:
-            await send_telegram(
+            await send_telegram_all(
                 f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ No candle data (try during 7:00–11:00 AM EST).",
                 bot,
-                TELEGRAM_CHAT_ID,
             )
         _record_scan_failure(state, bot, "No candle data")
         return
@@ -251,7 +249,7 @@ async def run_scan(bot=None):
         key_level=setup.key_level_name,
         notes=setup.notes,
     )
-    await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
+    await send_telegram_all(msg, bot)
 
     if AUTO_EXECUTE:
         broker = get_broker(BROKER)
@@ -346,7 +344,7 @@ async def _send_scan_status(
     reason: str,
 ) -> None:
     """Send a one-line scan status to Telegram so users see what the bot is doing."""
-    if not SHOW_SCAN_STATUS or not bot or not TELEGRAM_CHAT_ID:
+    if not SHOW_SCAN_STATUS or not bot or not TELEGRAM_CHAT_IDS:
         return
     time_est = now.strftime("%I:%M %p EST")
     price_str = f"{current_price:,.2f}" if current_price is not None else "—"
@@ -356,12 +354,12 @@ async def _send_scan_status(
         f"15m <code>{trend.value}</code> │ Levels: {level_count} │ "
         f"{reason} │ Trades: {trades_today}/{MAX_TRADES_PER_DAY}"
     )
-    await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
+    await send_telegram_all(msg, bot)
 
 
 async def run_trailing(bot=None):
     """Check active trades for trail milestones and stop hit. Send alerts."""
-    if not bot or not TELEGRAM_CHAT_ID:
+    if not bot or not TELEGRAM_CHAT_IDS:
         return
     state = get_state()
     if not TRAIL_ALERTS_ENABLED or not state.get("trail_alerts", True):
@@ -389,7 +387,7 @@ async def run_trailing(bot=None):
             state["trade_history"].append({"dir": trade.direction, "entry": trade.entry, "result": "stop", "pnl": result_usd, "date": now_est().strftime("%Y-%m-%d")})
             save_trade_state()
             msg = format_stop_hit(trade.direction, trade.entry, trade.current_stop, result_usd / trade.contracts, "stopped", state["daily_pnl"])
-            await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
+            await send_telegram_all(msg, bot)
             log_trade(trade.direction, trade.entry, trade.stop, trade.target1, trade.target2, "loss" if result_usd < 0 else "win", trade.current_stop, trade.rr_at_price(trade.current_stop))
             continue
         if trade.direction == "SHORT" and current_price >= trade.current_stop:
@@ -399,7 +397,7 @@ async def run_trailing(bot=None):
             state["trade_history"].append({"dir": trade.direction, "entry": trade.entry, "result": "stop", "pnl": result_usd, "date": now_est().strftime("%Y-%m-%d")})
             save_trade_state()
             msg = format_stop_hit(trade.direction, trade.entry, trade.current_stop, result_usd / trade.contracts, "stopped", state["daily_pnl"])
-            await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
+            await send_telegram_all(msg, bot)
             log_trade(trade.direction, trade.entry, trade.stop, trade.target1, trade.target2, "loss" if result_usd < 0 else "win", trade.current_stop, trade.rr_at_price(trade.current_stop))
             continue
 
@@ -424,7 +422,7 @@ async def run_trailing(bot=None):
                 trade.target2,
                 tip,
             )
-            await send_telegram(msg, bot, TELEGRAM_CHAT_ID)
+            await send_telegram_all(msg, bot)
             if TRAIL_MODE == "auto":
                 # Would call broker.update_stop(order_id, new_stop)
                 pass
@@ -437,7 +435,7 @@ async def run_trailing(bot=None):
 
 async def daily_summary_job(context: ContextTypes.DEFAULT_TYPE):
     """Send daily P&L summary (called by PTB job_queue)."""
-    if not context.application.bot or not TELEGRAM_CHAT_ID:
+    if not context.application.bot or not TELEGRAM_CHAT_IDS:
         return
     state = get_state()
     trades = state.get("trade_history", [])
@@ -449,7 +447,7 @@ async def daily_summary_job(context: ContextTypes.DEFAULT_TYPE):
     wr = (100 * winners / n) if n else 0
     lines = [f"Trade {i+1}: {t.get('dir','?')} @ {t.get('entry',0):,.2f} → ${t.get('pnl',0):+.0f}" for i, t in enumerate(today_trades[-10:])]
     msg = format_daily_summary(now_est().strftime("%Y-%m-%d"), state["trades_today"], winners, losers, pnl, wr, lines)
-    await send_telegram(msg, context.application.bot, TELEGRAM_CHAT_ID)
+    await send_telegram_all(msg, context.application.bot)
 
 
 async def scan_job(context: ContextTypes.DEFAULT_TYPE):
@@ -460,20 +458,21 @@ async def scan_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 def _send_telegram_sync(text: str, parse_mode: str = "HTML") -> None:
-    """Send message to Telegram from a background thread (sync HTTP)."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    """Send message to all configured Telegram chat IDs from a background thread (sync HTTP)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
         return
-    try:
-        import urllib.request
-        import urllib.parse
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": parse_mode}
-        data = urllib.parse.urlencode(payload).encode()
-        req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            pass
-    except Exception as e:
-        logger.warning("Telegram sync send failed: %s", e)
+    import urllib.request
+    import urllib.parse
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    for chat_id in TELEGRAM_CHAT_IDS:
+        try:
+            payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+            data = urllib.parse.urlencode(payload).encode()
+            req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                pass
+        except Exception as e:
+            logger.warning("Telegram sync send to %s failed: %s", chat_id, e)
 
 
 def _do_auto_retrain(context: ContextTypes.DEFAULT_TYPE):

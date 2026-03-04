@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from .alerts import format_trade_alert, format_trail_alert, send_telegram
+from .alerts import format_trade_alert, format_trail_alert, send_telegram, send_telegram_all
 from .scheduler import now_est
 from config import (
     DEFAULT_CONTRACTS,
@@ -25,6 +25,7 @@ from config import (
     MAX_RISK_PER_TRADE_USD,
     MAX_TRADES_PER_DAY,
     TELEGRAM_CHAT_ID,
+    TELEGRAM_CHAT_IDS,
     TRAIL_ALERTS_ENABLED,
     TRAIL_MODE,
     USE_ORDERFLOW,
@@ -853,8 +854,8 @@ async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_demo_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a demo trade alert to the configured chat (no real trade)."""
-    if not TELEGRAM_CHAT_ID:
-        await _reply_html(update, "❌ No <code>TELEGRAM_CHAT_ID</code> set.")
+    if not TELEGRAM_CHAT_IDS:
+        await _reply_html(update, "❌ No <code>TELEGRAM_CHAT_ID</code> (or TELEGRAM_CHAT_IDS) set.")
         return
     time_est = now_est().strftime("%I:%M %p EST")
     msg = format_trade_alert(
@@ -871,7 +872,7 @@ async def cmd_demo_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         key_level="7 AM High",
         notes="Demo signal – not a real trade.",
     )
-    ok = await send_telegram(msg, context.bot, TELEGRAM_CHAT_ID)
+    ok = await send_telegram_all(msg, context.bot)
     if ok:
         await _reply_html(update, "✅ Demo signal sent to your chat.")
     else:
@@ -880,8 +881,8 @@ async def cmd_demo_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def cmd_demo_trail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a demo trail-stop alert (no real trade)."""
-    if not TELEGRAM_CHAT_ID:
-        await _reply_html(update, "❌ No <code>TELEGRAM_CHAT_ID</code> set.")
+    if not TELEGRAM_CHAT_IDS:
+        await _reply_html(update, "❌ No <code>TELEGRAM_CHAT_ID</code> (or TELEGRAM_CHAT_IDS) set.")
         return
     msg = format_trail_alert(
         direction="LONG",
@@ -894,7 +895,7 @@ async def cmd_demo_trail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         target2=21580.00,
         tip="Take 50% off here and let the rest run!",
     )
-    ok = await send_telegram(msg, context.bot, TELEGRAM_CHAT_ID)
+    ok = await send_telegram_all(msg, context.bot)
     if ok:
         await _reply_html(update, "✅ Demo trail alert sent to your chat.")
     else:
@@ -903,8 +904,8 @@ async def cmd_demo_trail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cmd_demo_levels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a demo key levels message (sample values)."""
-    if not TELEGRAM_CHAT_ID:
-        await _reply_html(update, "❌ No <code>TELEGRAM_CHAT_ID</code> set.")
+    if not TELEGRAM_CHAT_IDS:
+        await _reply_html(update, "❌ No <code>TELEGRAM_CHAT_ID</code> (or TELEGRAM_CHAT_IDS) set.")
         return
     msg = (
         "<b>📌 Today's Key Levels</b> <i>(demo)</i>\n"
@@ -917,7 +918,7 @@ async def cmd_demo_levels(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "Session OR H: 21,468.00\n"
         "Session OR L: 21,442.00"
     )
-    ok = await send_telegram(msg, context.bot, TELEGRAM_CHAT_ID)
+    ok = await send_telegram_all(msg, context.bot)
     if ok:
         await _reply_html(update, "✅ Demo levels sent to your chat.")
     else:

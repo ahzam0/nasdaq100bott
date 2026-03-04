@@ -25,6 +25,15 @@ TRADE_DATA_JSON = BASE_DIR / "data" / "trade_data.json"  # Persist trade history
 # Telegram (use env vars in production; never commit real tokens)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip() or None
+# All chat IDs that receive alerts (comma-separated in env, or single ID). Add 633690242 for second user.
+def _telegram_chat_ids():
+    raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    ids = [c.strip() for c in raw.split(",") if c.strip()] if raw else []
+    extra = "633690242"
+    if extra not in ids:
+        ids.append(extra)
+    return ids
+TELEGRAM_CHAT_IDS = _telegram_chat_ids()
 
 # Trading – previous strategy (~40% monthly return, BACKTEST_3M_RESULT.md)
 INSTRUMENT = "MNQ"

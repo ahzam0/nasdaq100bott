@@ -9,7 +9,7 @@ import html
 import logging
 from typing import Optional
 
-from config import INSTRUMENT, TICK_VALUE_USD
+from config import INSTRUMENT, TICK_VALUE_USD, TELEGRAM_CHAT_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -169,3 +169,14 @@ async def send_telegram(text: str, bot, chat_id: str, parse_mode: str = "HTML") 
         except Exception:
             pass
         return False
+
+
+async def send_telegram_all(text: str, bot, parse_mode: str = "HTML") -> bool:
+    """Send message to all configured chat IDs (all users with bot access). Returns True if at least one send succeeded."""
+    if not TELEGRAM_CHAT_IDS:
+        return False
+    ok = False
+    for chat_id in TELEGRAM_CHAT_IDS:
+        if await send_telegram(text, bot, chat_id, parse_mode):
+            ok = True
+    return ok
