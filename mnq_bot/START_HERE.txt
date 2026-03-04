@@ -30,13 +30,18 @@ from run_bot_pa import application
 5. Save, then click the green RELOAD button.
 
 --------------------------------------------------------------------------------
-STEP 3 – Bash: set Telegram webhook (run once)
+STEP 3 – Set Telegram webhook (do once)
 --------------------------------------------------------------------------------
 
-curl -F "url=https://YOUR_USERNAME.pythonanywhere.com/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
+Option A – In browser (easiest): open this URL (replace YOUR_USERNAME):
+  https://YOUR_USERNAME.pythonanywhere.com/set-webhook?secret=mnqbotcron123
+  The page will say "Webhook set to ...". Done.
+
+Option B – In Bash:
+  curl -F "url=https://YOUR_USERNAME.pythonanywhere.com/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
 
 --------------------------------------------------------------------------------
-STEP 4 – Tasks tab: scan every minute
+STEP 4 – Tasks tab: scan every minute (PythonAnywhere only)
 --------------------------------------------------------------------------------
 
 1. Tasks → Add a new task
@@ -44,6 +49,8 @@ STEP 4 – Tasks tab: scan every minute
 3. URL: https://YOUR_USERNAME.pythonanywhere.com/cron/scan?secret=mnqbotcron123
 4. Schedule: Every minute
 5. Save
+
+(On Railway/Render the app runs the scan every 60 sec inside the app – no task needed.)
 
 --------------------------------------------------------------------------------
 BONUS – Free account: whitelist (Account or Network tab)

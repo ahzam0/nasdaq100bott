@@ -58,29 +58,25 @@ Your bot has token/chat ID in code, so it can run without these. To override or 
 
 ---
 
-## 5. Set the Telegram webhook
+## 5. Set the Telegram webhook (one click)
 
-Replace **YOUR_RAILWAY_URL** with your real URL (e.g. `https://nasdaq100bott-production-xxxx.up.railway.app`).
+**Easiest:** Open this URL in your browser (replace with your real Railway URL):
 
-**On Windows (PowerShell):**
-```powershell
-$url = "YOUR_RAILWAY_URL"
-curl.exe -F "url=$url/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
+```
+https://YOUR_RAILWAY_URL/set-webhook?secret=mnqbotcron123
 ```
 
-**On Mac/Linux or Bash:**
-```bash
-curl -F "url=YOUR_RAILWAY_URL/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
-```
+Example: if your app is `https://nasdaq100bott.up.railway.app`, open:
+`https://nasdaq100bott.up.railway.app/set-webhook?secret=mnqbotcron123`
 
-Example if your URL is `https://mnqbot.up.railway.app`:
-```bash
-curl -F "url=https://mnqbot.up.railway.app/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"
-```
+The page will show "Webhook set to https://...". No curl needed.
+
+**Optional – curl:**  
+`curl -F "url=YOUR_RAILWAY_URL/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"`
 
 ---
 
-## 6. Run the scan every minute (cron)
+## 6. Scan every minute – automatic
 
 Railway doesn’t have a built-in cron. Use a free external cron:
 
@@ -111,8 +107,8 @@ Replace **YOUR_RAILWAY_URL** with the same URL from step 4. If you set `CRON_SEC
 | 2 | Set **Root Directory** to **mnq_bot** |
 | 3 | (Optional) Added TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET |
 | 4 | Deployed and copied your **Railway URL** |
-| 5 | Set Telegram webhook to **YOUR_RAILWAY_URL/webhook** |
-| 6 | Added cron-job.org to call **YOUR_RAILWAY_URL/cron/scan?secret=mnqbotcron123** every minute |
+| 5 | Opened **YOUR_RAILWAY_URL/set-webhook?secret=mnqbotcron123** in browser (webhook set automatically) |
+| 6 | No cron needed – app runs scan every 60 sec inside the process |
 | 7 | Tested with /start and the root URL |
 
 After this, the bot runs on Railway and sends live signals during **7–11 AM EST**.
