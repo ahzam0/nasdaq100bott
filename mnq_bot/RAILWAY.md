@@ -26,7 +26,7 @@ The app code is in the **mnq_bot** folder, not the repo root.
    ```
 5. Save.
 
-*(If you don’t see Root Directory, check under "Source" or in the service "Settings". Some UIs use "Monorepo" or "Subdirectory" = `mnq_bot`.)*
+*(If you don't see Root Directory, check under "Source" or in the service "Settings". Some UIs use "Monorepo" or "Subdirectory" = `mnq_bot`.)*
 
 ---
 
@@ -50,11 +50,11 @@ Your bot has token/chat ID in code, so it can run without these. To override or 
 1. Railway usually **auto-deploys** when you connect the repo. If not, click **"Deploy"** or **"Redeploy"**.
 2. Wait until the build finishes (Build → Run).
 3. Open the **Settings** tab and find **"Networking"** or **"Domains"**.
-4. Click **"Generate Domain"** (or **"Add domain"**). You’ll get a URL like:
+4. Click **"Generate Domain"** (or **"Add domain"**). You'll get a URL like:
    ```
    https://nasdaq100bott-production-xxxx.up.railway.app
    ```
-5. Copy this URL; you’ll use it as **YOUR_RAILWAY_URL** below.
+5. Copy this URL; you'll use it as **YOUR_RAILWAY_URL** below.
 
 ---
 
@@ -78,16 +78,7 @@ The page will show "Webhook set to https://...". No curl needed.
 
 ## 6. Scan every minute – automatic
 
-Railway doesn’t have a built-in cron. Use a free external cron:
-
-1. Go to **[cron-job.org](https://cron-job.org)** (or similar) and create a free account.
-2. Create a new **Cron Job**:
-   - **URL:**  
-     `https://YOUR_RAILWAY_URL/cron/scan?secret=mnqbotcron123`
-   - **Schedule:** Every minute (e.g. `* * * * *` or “Every minute”).
-3. Save.
-
-Replace **YOUR_RAILWAY_URL** with the same URL from step 4. If you set `CRON_SECRET` in Variables, use that value instead of `mnqbotcron123`.
+The app runs the scan every 60 seconds inside the process. No external cron needed—just deploy and visit `/set-webhook` once.
 
 ---
 
@@ -122,4 +113,4 @@ After this, the bot runs on Railway and sends live signals during **7–11 AM ES
 - **No reply in Telegram:** Confirm webhook:  
   `https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/getWebhookInfo`  
   It should show your Railway URL.
-- **Scans not running:** Confirm the cron job URL is correct and the cron runs every minute; check Railway logs when the URL is hit.
+- **Scans not running:** The app runs the scan every 60 seconds; check Railway logs for errors when the scheduler runs.
