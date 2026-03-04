@@ -90,11 +90,16 @@ class YahooWSClient:
         except ImportError:
             logger.warning("yfinance not installed. pip install yfinance")
             return
+        reconnect_delay = 2.0
+        max_reconnects_after_thread_error = 3
+        thread_error_count = 0
         while not self._stop.is_set():
             try:
                 with yf.WebSocket(verbose=False) as ws:
                     self._ws = ws
                     ws.subscribe([self._symbol])
+                    thread_error_count = 0
+                    reconnect_delay = 2.0
 
                     def on_msg(msg):
                         if self._stop.is_set():
@@ -105,19 +110,56 @@ class YahooWSClient:
                             self._last_quote_price = p
 
                     ws.listen(on_msg)
+            except RuntimeError as e:
+                if "can't start new thread" in str(e).lower() or "thread" in str(e).lower():
+                    thread_error_count += 1
+                    logger.warning(
+                        "Yahoo WS: thread limit reached (can't start new thread). "
+                        "Set MNQ_YAHOO_WS_REALTIME=false to use REST-only. Attempt %d/%d.",
+                        thread_error_count,
+                        max_reconnects_after_thread_error,
+                    )
+                    if thread_error_count >= max_reconnects_after_thread_error:
+                        logger.error(
+                            "Yahoo WebSocket disabled after %d thread errors. "
+                            "Use MNQ_YAHOO_WS_REALTIME=false or increase process thread limit.",
+                            max_reconnects_after_thread_error,
+                        )
+                        return
+                    reconnect_delay = min(60.0, reconnect_delay * 5)
+                else:
+                    raise
             except Exception as e:
                 logger.debug("Yahoo WS error: %s", e)
             self._ws = None
             if self._stop.is_set():
                 break
-            time.sleep(2)
+            time.sleep(reconnect_delay)
+
+
+# Singleton so we never create multiple Yahoo WS clients (avoids thread exhaustion).
+_yahoo_ws_singleton: Optional[YahooWSClient] = None
+_yahoo_ws_singleton_lock = threading.Lock()
+
+
+def get_or_create_yahoo_ws_client(
+    symbol: str = YAHOO_WS_SYMBOL,
+    qqq_to_nq_ratio: float = DEFAULT_QQQ_TO_NQ_RATIO,
+) -> Optional[YahooWSClient]:
+    """Return the single shared Yahoo WebSocket client. Creates and starts it once."""
+    global _yahoo_ws_singleton
+    with _yahoo_ws_singleton_lock:
+        if _yahoo_ws_singleton is not None:
+            return _yahoo_ws_singleton
+        client = YahooWSClient(symbol=symbol, qqq_to_nq_ratio=qqq_to_nq_ratio)
+        client.start()
+        _yahoo_ws_singleton = client
+    return client
 
 
 def create_yahoo_ws_client(
     symbol: str = YAHOO_WS_SYMBOL,
     qqq_to_nq_ratio: float = DEFAULT_QQQ_TO_NQ_RATIO,
 ) -> Optional[YahooWSClient]:
-    """Create and start Yahoo WebSocket client. Free, no API key."""
-    client = YahooWSClient(symbol=symbol, qqq_to_nq_ratio=qqq_to_nq_ratio)
-    client.start()
-    return client
+    """Create and start Yahoo WebSocket client (singleton). Free, no API key."""
+    return get_or_create_yahoo_ws_client(symbol=symbol, qqq_to_nq_ratio=qqq_to_nq_ratio)

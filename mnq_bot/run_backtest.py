@@ -120,7 +120,29 @@ def main():
     parser.add_argument("--realtime", action="store_true", help="Use real-time data from live feed (same as bot: Yahoo/Price API/Tradovate). Fetches latest 1m/15m and runs backtest.")
     parser.add_argument("--loop", type=int, default=0, metavar="SEC", help="With --realtime: re-run backtest every SEC seconds (e.g. 60). 0 = run once.")
     parser.add_argument("--use-orderflow-proxy", action="store_true", help="Use candle-based order flow proxy in backtest (require bar direction to confirm LONG/SHORT; aligns with live when USE_ORDERFLOW).")
+    parser.add_argument("--session-24-7", action="store_true", help="Scan/trade 24/7 (no 7–11 EST filter). For testing only.")
+    parser.add_argument("--session-ist", action="store_true", help="Session 8:00 PM–11:30 PM India Standard Time (IST).")
+    parser.add_argument("--session-start", type=str, default="", metavar="HH:MM", help="EST session start (e.g. 07:00). With --session-end, overrides default 7-11.")
+    parser.add_argument("--session-end", type=str, default="", metavar="HH:MM", help="EST session end (e.g. 11:00). With --session-start.")
     args = parser.parse_args()
+
+    def _parse_session_min(s: str) -> int | None:
+        if not s or ":" not in s:
+            return None
+        parts = s.strip().split(":")
+        if len(parts) != 2:
+            return None
+        try:
+            h, m = int(parts[0]), int(parts[1])
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return h * 60 + m
+        except ValueError:
+            pass
+        return None
+
+    session_start_min = _parse_session_min(args.session_start)
+    session_end_min = _parse_session_min(args.session_end)
+    use_custom_session = session_start_min is not None and session_end_min is not None and session_start_min < session_end_min
 
     df_1m, df_15m = None, None
     if args.load_data:
@@ -200,12 +222,14 @@ def main():
         print(f"  1m bars: {len(df_1m)}, 15m bars: {len(df_15m)}")
 
     if df_1m is None and args.live:
+        fetch_24_7 = args.session_24_7 or use_custom_session
+        session_note = "24/7 (all hours)" if fetch_24_7 else ("IST 8PM–11:30PM" if args.session_ist else "session 7-11 EST")
         if args.months and args.months >= 1:
-            print(f"Fetching live market data from Yahoo Finance (NQ=F, last {args.months} month(s), 15m->1m, session 7-11 EST)...")
-            df_1m, df_15m = fetch_live_backtest_data(months=args.months)
+            print(f"Fetching live market data from Yahoo Finance (NQ=F, last {args.months} month(s), 15m->1m, {session_note})...")
+            df_1m, df_15m = fetch_live_backtest_data(months=args.months, session_24_7=fetch_24_7, session_ist=args.session_ist)
         else:
-            print("Fetching live market data from Yahoo Finance (NQ=F, last 7 days, session 7-11 EST)...")
-            df_1m, df_15m = fetch_live_backtest_data()
+            print(f"Fetching live market data from Yahoo Finance (NQ=F, last 7 days, {session_note})...")
+            df_1m, df_15m = fetch_live_backtest_data(session_24_7=fetch_24_7, session_ist=args.session_ist)
         if df_1m.empty:
             print("ERROR: No 1m data received. Check internet and yfinance (pip install yfinance).")
             return 1
@@ -239,6 +263,10 @@ def main():
         fallback_after_minutes=FALLBACK_AFTER_MINUTES if TARGET_MIN_TRADES_PER_DAY >= 1 else 0,
         fallback_min_rr=FALLBACK_MIN_RR if TARGET_MIN_TRADES_PER_DAY >= 1 else None,
         use_orderflow_proxy=args.use_orderflow_proxy,
+        session_24_7=args.session_24_7,
+        session_ist=args.session_ist,
+        session_start_min=session_start_min if use_custom_session else None,
+        session_end_min=session_end_min if use_custom_session else None,
     )
     dd_cap_msg = f", DD cap={args.max_dd_pct}%" if args.max_dd_pct is not None else ""
     of_msg = " (order flow proxy ON)" if args.use_orderflow_proxy else ""
@@ -249,7 +277,11 @@ def main():
     if args.realtime:
         print("  Data source: Live feed (real-time, session 7-11 EST)")
     elif args.live:
-        src = f"Yahoo Finance (NQ=F, last {args.months} month(s), 7-11 EST)" if args.months and args.months >= 1 else "Yahoo Finance (NQ=F, last 7 days, 7-11 EST)"
+        if use_custom_session:
+            session_note = f"EST {args.session_start}-{args.session_end}"
+        else:
+            session_note = "24/7" if args.session_24_7 else ("IST 8PM–11:30PM" if args.session_ist else "7-11 EST")
+        src = f"Yahoo Finance (NQ=F, last {args.months} month(s), {session_note})" if args.months and args.months >= 1 else f"Yahoo Finance (NQ=F, last 7 days, {session_note})"
         print(f"  Data source: {src}")
     print_report(result)
     if args.csv:

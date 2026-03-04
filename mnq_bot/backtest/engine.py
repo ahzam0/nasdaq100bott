@@ -28,6 +28,10 @@ from utils.risk_calculator import contracts_from_risk
 
 logger = logging.getLogger(__name__)
 EST = ZoneInfo("America/New_York")
+IST = ZoneInfo("Asia/Kolkata")
+# IST session 8:00 PM–11:30 PM
+IST_SESSION_START_MIN = 20 * 60
+IST_SESSION_END_MIN = 23 * 60 + 30
 
 
 @dataclass
@@ -64,15 +68,25 @@ class BacktestResult:
     equity_curve: list[tuple[datetime, float]] = field(default_factory=list)
 
 
-def _in_session(t: datetime) -> bool:
-    """True if time is in 7:00–11:00 EST (session window)."""
+def _in_session(
+    t: datetime,
+    session_ist: bool = False,
+    session_start_min: int | None = None,
+    session_end_min: int | None = None,
+) -> bool:
+    """True if time is in session. Custom EST window when session_start_min/session_end_min set (minutes from midnight)."""
     if t.tzinfo is None:
         t = t.replace(tzinfo=EST)
-    else:
+    if session_start_min is not None and session_end_min is not None:
         t = t.astimezone(EST)
-    h, m = t.hour, t.minute
-    mins = h * 60 + m
-    return 7 * 60 <= mins <= 11 * 60  # 7:00 through 11:00
+        mins = t.hour * 60 + t.minute
+        return session_start_min <= mins <= session_end_min
+    tz = IST if session_ist else EST
+    t = t.astimezone(tz)
+    mins = t.hour * 60 + t.minute
+    if session_ist:
+        return IST_SESSION_START_MIN <= mins <= IST_SESSION_END_MIN
+    return 7 * 60 <= mins <= 11 * 60
 
 
 def _trades_today_before(trades: list[BacktestTrade], before_time: datetime) -> int:
@@ -101,8 +115,16 @@ class BacktestEngine:
         fallback_after_minutes: int = 0,
         fallback_min_rr: float | None = None,
         use_orderflow_proxy: bool = False,
+        session_24_7: bool = False,
+        session_ist: bool = False,
+        session_start_min: int | None = None,
+        session_end_min: int | None = None,
     ):
         self.initial_balance = initial_balance
+        self.session_24_7 = session_24_7
+        self.session_ist = session_ist
+        self.session_start_min = session_start_min
+        self.session_end_min = session_end_min
         self.balance = initial_balance
         self.risk_per_trade_usd = risk_per_trade_usd
         self.max_trades_per_day = max_trades_per_day
@@ -300,7 +322,12 @@ class BacktestEngine:
             bar_ts = df_1m.index[i]
             bar = df_1m.iloc[i]
             now_est = bar_ts.to_pydatetime() if hasattr(bar_ts, "to_pydatetime") else bar_ts
-            if not _in_session(now_est):
+            if not self.session_24_7 and not _in_session(
+                now_est,
+                session_ist=self.session_ist,
+                session_start_min=self.session_start_min,
+                session_end_min=self.session_end_min,
+            ):
                 if i % 20 == 0:
                     self.equity_curve.append((now_est, self.balance))
                 continue

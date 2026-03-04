@@ -14,8 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
 from .alerts import format_trade_alert, format_trail_alert, send_telegram
 from .scheduler import now_est
@@ -37,6 +37,8 @@ from config import (
     PRICE_API_URL,
     ORDERFLOW_API_URL,
     USE_ECONOMIC_CALENDAR,
+    get_use_yahoo_ws_realtime,
+    set_use_yahoo_ws_realtime,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +137,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update,
         "<b>✅ MNQ Riley Coleman Bot</b>\n"
         "────────────────────\n"
-        "Scanning <b>ON</b> • Session 7:00–11:00 AM EST\n\n"
+        "Scanning <b>ON</b> • Signals only 7:00–11:00 AM EST\n\n"
         "Use buttons below or <code>/help</code> for commands.",
         reply_markup=get_main_keyboard(),
     )
@@ -267,8 +269,19 @@ def _fetch_live_price_sync() -> tuple[str, str]:
         return "", str(e)
 
 
+def _live_price_inline_keyboard():
+    """Inline buttons to toggle Yahoo WebSocket (live price source)."""
+    on = get_use_yahoo_ws_realtime()
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🟢 WebSocket On" if on else "WebSocket On", callback_data="yahoo_ws_on"),
+            InlineKeyboardButton("⚪ REST only" if not on else "REST only", callback_data="yahoo_ws_off"),
+        ],
+    ])
+
+
 async def cmd_live_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show live MNQ price (button or /price)."""
+    """Show live MNQ price (button or /price) with toggle for WebSocket on/off."""
     loop = asyncio.get_event_loop()
     price_line, feed_info = await loop.run_in_executor(None, _fetch_live_price_sync)
     if price_line:
@@ -276,7 +289,8 @@ async def cmd_live_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"<b>💰 {INSTRUMENT} Live Price</b>\n"
             "────────────────────\n"
             f"<b><code>{price_line}</code></b>\n\n"
-            f"<i>Source: {_esc(feed_info)}</i>"
+            f"<i>Source: {_esc(feed_info)}</i>\n"
+            "Tap a button below to change price source:"
         )
     else:
         msg = (
@@ -284,9 +298,39 @@ async def cmd_live_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "────────────────────\n"
             "Feed not connected or no price.\n\n"
             f"<i>Feed: {_esc(feed_info)}</i>\n"
-            "Check <code>/apis</code> or start price server."
+            "Tap a button to set price source:"
         )
-    await _reply_html(update, msg)
+    await update.message.reply_text(
+        msg,
+        parse_mode="HTML",
+        reply_markup=_live_price_inline_keyboard(),
+    )
+
+
+async def callback_feed_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline button: Yahoo WebSocket On / REST only."""
+    query = update.callback_query
+    await query.answer()
+    if not query.data or query.data not in ("yahoo_ws_on", "yahoo_ws_off"):
+        return
+    enabled = query.data == "yahoo_ws_on"
+    try:
+        set_use_yahoo_ws_realtime(enabled)
+    except Exception as e:
+        await query.edit_message_text(f"❌ Error: {_esc(str(e))}", parse_mode="HTML")
+        return
+    status = "WebSocket (minimal delay)" if enabled else "REST only (no extra threads)"
+    try:
+        await query.edit_message_text(
+            f"<b>💰 {INSTRUMENT} Live Price</b>\n"
+            "────────────────────\n"
+            f"✅ <b>Price source set to: {_esc(status)}</b>\n\n"
+            "Tap <b>💰 Live Price</b> again to see current price and change source.",
+            parse_mode="HTML",
+            reply_markup=_live_price_inline_keyboard(),
+        )
+    except Exception:
+        pass
 
 
 async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -791,4 +835,5 @@ def register_commands(application):
     application.add_handler(CommandHandler("demo_signal", cmd_demo_signal))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("pause", cmd_stop))
+    application.add_handler(CallbackQueryHandler(callback_feed_toggle, pattern="^yahoo_ws_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_button))

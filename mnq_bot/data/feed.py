@@ -395,12 +395,12 @@ def get_feed(broker: str = "paper", use_live_feed: bool = True, price_api_url: O
                 return TradovateRealtimeFeed(md_client=md_client)
     except Exception as e:
         logger.debug("Tradovate realtime feed skipped: %s", e)
-    # Free minimal-delay: our Yahoo WebSocket feed (QQQ stream -> NQ equivalent)
+    # Free minimal-delay: our Yahoo WebSocket feed (QQQ stream -> NQ equivalent). Uses singleton to avoid thread exhaustion.
     try:
-        from config import USE_YAHOO_WS_REALTIME, YAHOO_WS_QQQ_TO_NQ_RATIO
-        if USE_YAHOO_WS_REALTIME:
-            from data.yahoo_ws_realtime import create_yahoo_ws_client
-            ws_client = create_yahoo_ws_client(qqq_to_nq_ratio=YAHOO_WS_QQQ_TO_NQ_RATIO)
+        from config import get_use_yahoo_ws_realtime, YAHOO_WS_QQQ_TO_NQ_RATIO
+        if get_use_yahoo_ws_realtime():
+            from data.yahoo_ws_realtime import get_or_create_yahoo_ws_client
+            ws_client = get_or_create_yahoo_ws_client(qqq_to_nq_ratio=YAHOO_WS_QQQ_TO_NQ_RATIO)
             if ws_client:
                 logger.info("Using Yahoo WebSocket feed (free, minimal delay)")
                 return YahooWSFeed(ws_client=ws_client)

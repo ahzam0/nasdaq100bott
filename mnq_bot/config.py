@@ -35,11 +35,12 @@ MIN_RR_RATIO = 1.8
 PARTIAL_EXIT_PERCENT = 50
 SLIPPAGE_TICKS = 5  # Flag trade if fill is more than this from expected
 
-# Sessions (EST) – 7:00–11:00 scan window (previous strategy)
-PREMARKET_START = os.getenv("MNQ_PREMARKET_START", "07:00").strip()
+# Session: signals only 7:00–11:00 AM EST (fixed for live bot)
+SCAN_SESSION_EST = "7:00–11:00 AM EST"
+PREMARKET_START = os.getenv("MNQ_PREMARKET_START", "07:00").strip() or "07:00"
 PREMARKET_END = "09:30"
 RTH_START = "09:30"
-RTH_END = os.getenv("MNQ_RTH_END", "11:00").strip()
+RTH_END = os.getenv("MNQ_RTH_END", "11:00").strip() or "11:00"
 SESSION_OPENING_RANGE_MINUTES = 5  # 9:30–9:35
 SCAN_ACTIVE = True
 SHOW_SCAN_STATUS = os.getenv("MNQ_SHOW_SCAN_STATUS", "true").lower() in ("1", "true", "yes")
@@ -116,8 +117,40 @@ ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 ALPACA_BASE_URL = "https://paper-api.alpaca.markets"  # or live
 
-# Free minimal-delay price: Yahoo WebSocket (QQQ stream -> NQ equivalent). No API key.
-USE_YAHOO_WS_REALTIME = os.getenv("MNQ_YAHOO_WS_REALTIME", "true").lower() in ("1", "true", "yes")
+# Free price: Yahoo WebSocket = minimal delay but uses threads (can fail on Railway etc.).
+# Default false = live price via Yahoo REST (updated every scan, no extra threads). Set true for WebSocket if host allows.
+USE_YAHOO_WS_REALTIME = os.getenv("MNQ_YAHOO_WS_REALTIME", "false").lower() in ("1", "true", "yes")
+# Runtime override from /settings page (data/runtime_settings.json)
+RUNTIME_SETTINGS_PATH = BASE_DIR / "data" / "runtime_settings.json"
+
+
+def get_use_yahoo_ws_realtime() -> bool:
+    """Current Yahoo WebSocket setting: runtime file overrides env/default."""
+    try:
+        if RUNTIME_SETTINGS_PATH.exists():
+            import json
+            data = json.loads(RUNTIME_SETTINGS_PATH.read_text(encoding="utf-8"))
+            if "yahoo_ws_realtime" in data:
+                return bool(data["yahoo_ws_realtime"])
+    except Exception:
+        pass
+    return USE_YAHOO_WS_REALTIME
+
+
+def set_use_yahoo_ws_realtime(enabled: bool) -> None:
+    """Persist Yahoo WebSocket on/off (used by /settings page)."""
+    RUNTIME_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import json
+        data = {}
+        if RUNTIME_SETTINGS_PATH.exists():
+            data = json.loads(RUNTIME_SETTINGS_PATH.read_text(encoding="utf-8"))
+        data["yahoo_ws_realtime"] = enabled
+        RUNTIME_SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        raise
+
+
 YAHOO_WS_QQQ_TO_NQ_RATIO = float(os.getenv("YAHOO_WS_QQQ_TO_NQ_RATIO", "41.15"))  # NQ = QQQ * this (calibrated ~24,565)
 
 # Economic calendar (Forex Factory or similar)

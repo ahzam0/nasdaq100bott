@@ -47,6 +47,7 @@ from config import (
     RETRAIN_DAY_OF_WEEK,
     RETRAIN_HOUR_EST,
     RETRAIN_MINUTE_EST,
+    SCAN_SESSION_EST,
 )
 from data import get_feed
 from strategy import (
@@ -137,7 +138,7 @@ async def run_scan(bot=None):
             last = state.get("last_idle_status_sent")
             if last is None or (now - last) >= timedelta(minutes=OUTSIDE_SESSION_STATUS_INTERVAL_MIN):
                 await send_telegram(
-                    f"⏸ <b>Bot running</b> │ Scan session <code>7:00–11:00 AM EST</code>. "
+                    f"⏸ <b>Bot running</b> │ Signals only <code>{SCAN_SESSION_EST}</code>. "
                     f"Next scan when in session.",
                     bot,
                     TELEGRAM_CHAT_ID,
@@ -543,7 +544,7 @@ def main():
             days=(RETRAIN_DAY_OF_WEEK,),
         )
         logger.info("Auto-retrain scheduled: day=%s %02d:%02d EST", RETRAIN_DAY_OF_WEEK, RETRAIN_HOUR_EST, RETRAIN_MINUTE_EST)
-    logger.info("MNQ Bot starting – Riley Coleman strategy. Session 7:00–11:00 AM EST.")
+    logger.info("MNQ Bot starting – Riley Coleman strategy. Signals only %s.", SCAN_SESSION_EST)
     app.run_polling(allowed_updates=["message"])
 
 

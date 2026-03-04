@@ -1,0 +1,20 @@
+================================================================================
+  RUN BACKTEST (MNQ Riley Coleman Strategy)
+================================================================================
+
+Primary backtest (7–11 EST, 3 months, $50k, $380/trade) – use this one:
+
+  python run_backtest.py --live --months 3 --balance 50000 --risk 380
+
+  Or (Windows):  py -3 run_backtest.py --live --months 3 --balance 50000 --risk 380
+
+Windows one-click: run_backtest.bat
+
+--------------------------------------------------------------------------------
+Other options (optional)
+--------------------------------------------------------------------------------
+  1 month:     python run_backtest.py --live --months 1 --balance 50000 --risk 380
+  Synthetic:   python run_backtest.py --days 30 --balance 50000 --risk 330
+  Save CSV:    python run_backtest.py --live --months 3 --balance 50000 --risk 380 --csv trades.csv
+
+================================================================================

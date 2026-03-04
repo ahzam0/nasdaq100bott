@@ -2,6 +2,8 @@
   EASIEST WAY TO RUN YOUR BOT ONLINE (PythonAnywhere – free)
 ================================================================================
 
+Signals only: 7:00–11:00 AM EST (session is fixed; no alerts outside this window).
+
 Replace YOUR_USERNAME with your PythonAnywhere username everywhere below.
 
 --------------------------------------------------------------------------------
@@ -59,6 +61,15 @@ BONUS – Free account: whitelist (Account or Network tab)
 Add:  api.telegram.org
 Add:  query1.finance.yahoo.com
 
+--------------------------------------------------------------------------------
+Live price without WebSocket (default: stable on Railway, etc.)
+--------------------------------------------------------------------------------
+
+By default the bot uses Yahoo REST for live price (updated every scan).
+This uses Yahoo REST only (no WebSocket), so the bot won’t hit thread limits.
+You still get live NQ price and full signals. For WebSocket: MNQ_YAHOO_WS_REALTIME=true
+
 ================================================================================
-DONE. Open Telegram and send /start to your bot. Live signals 7–11 AM EST.
+DONE. Open Telegram and send /start to your bot.
+Live signals only during 7:00–11:00 AM EST.
 ================================================================================

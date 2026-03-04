@@ -30,10 +30,10 @@ def _init_realtime_client():
         return
     # 1) Free Yahoo WebSocket (minimal delay, no API key)
     try:
-        from config import USE_YAHOO_WS_REALTIME, YAHOO_WS_QQQ_TO_NQ_RATIO
-        if USE_YAHOO_WS_REALTIME:
-            from data.yahoo_ws_realtime import create_yahoo_ws_client
-            client = create_yahoo_ws_client(qqq_to_nq_ratio=YAHOO_WS_QQQ_TO_NQ_RATIO)
+        from config import get_use_yahoo_ws_realtime, YAHOO_WS_QQQ_TO_NQ_RATIO
+        if get_use_yahoo_ws_realtime():
+            from data.yahoo_ws_realtime import get_or_create_yahoo_ws_client
+            client = get_or_create_yahoo_ws_client(qqq_to_nq_ratio=YAHOO_WS_QQQ_TO_NQ_RATIO)
             if client:
                 _REALTIME_CLIENT = client
                 logger.info("Price API: Yahoo WebSocket backend active (free, minimal delay)")

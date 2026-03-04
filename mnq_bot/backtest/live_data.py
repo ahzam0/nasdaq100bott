@@ -13,6 +13,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 EST = ZoneInfo("America/New_York")
+IST = ZoneInfo("Asia/Kolkata")
+
+# IST session 8:00 PM–11:30 PM = 20:00–23:30 (minute_of_day 1200–1410)
+IST_SESSION_START_MIN = 20 * 60
+IST_SESSION_END_MIN = 23 * 60 + 30
 
 # Yahoo: 1m data = last 7 days only; 15m = up to 60 days
 # If NQ=F fails (rate limit/region), we try index then ES futures
@@ -66,21 +71,24 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _session_filter(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep only 7:00–11:00 EST bars."""
+def _session_filter(df: pd.DataFrame, session_ist: bool = False) -> pd.DataFrame:
+    """Keep only session bars: EST 7:00–11:00, or IST 8:00 PM–11:30 PM when session_ist=True."""
     if df.empty:
         return df
     idx = df.index
     if idx.tzinfo is None:
-        idx = idx.tz_localize(EST)
+        idx = idx.tz_localize(EST, ambiguous="infer")
+    idx = idx.tz_convert(IST if session_ist else EST)
+    if session_ist:
+        minute_of_day = idx.hour * 60 + idx.minute
+        mask = (minute_of_day >= IST_SESSION_START_MIN) & (minute_of_day <= IST_SESSION_END_MIN)
     else:
-        idx = idx.tz_convert(EST)
-    minute_of_day = idx.hour * 60 + idx.minute
-    mask = (minute_of_day >= 7 * 60) & (minute_of_day <= 11 * 60)
+        minute_of_day = idx.hour * 60 + idx.minute
+        mask = (minute_of_day >= 7 * 60) & (minute_of_day <= 11 * 60)
     return df.loc[mask].copy()
 
 
-def fetch_yfinance_1m(symbol: str | None = None, period: str = PERIOD_1M) -> pd.DataFrame:
+def fetch_yfinance_1m(symbol: str | None = None, period: str = PERIOD_1M, session_filter: bool = True, session_ist: bool = False) -> pd.DataFrame:
     """Fetch 1m OHLCV from Yahoo Finance. Returns DataFrame with EST index."""
     symbol = symbol or YF_SYMBOLS[0]
     try:
@@ -102,13 +110,13 @@ def fetch_yfinance_1m(symbol: str | None = None, period: str = PERIOD_1M) -> pd.
                 continue
             df = _normalize_ohlcv(data)
             if not df.empty:
-                return _session_filter(df)
+                return _session_filter(df, session_ist=session_ist) if session_filter else df
         except Exception as e:
             logger.debug("yfinance 1m %s failed for %s: %s", api, symbol, e)
     return pd.DataFrame()
 
 
-def fetch_yfinance_15m(symbol: str | None = None, period: str = PERIOD_15M) -> pd.DataFrame:
+def fetch_yfinance_15m(symbol: str | None = None, period: str = PERIOD_15M, session_filter: bool = True, session_ist: bool = False) -> pd.DataFrame:
     """Fetch 15m OHLCV from Yahoo Finance. Returns DataFrame with EST index."""
     symbol = symbol or YF_SYMBOLS[0]
     try:
@@ -129,7 +137,7 @@ def fetch_yfinance_15m(symbol: str | None = None, period: str = PERIOD_15M) -> p
                 continue
             df = _normalize_ohlcv(data)
             if not df.empty:
-                return _session_filter(df)
+                return _session_filter(df, session_ist=session_ist) if session_filter else df
         except Exception as e:
             logger.debug("yfinance 15m %s failed for %s: %s", api, symbol, e)
     return pd.DataFrame()
@@ -158,52 +166,53 @@ def fetch_live_backtest_data(
     period_1m: str = PERIOD_1M,
     period_15m: str = PERIOD_15M,
     months: int | None = None,
+    session_24_7: bool = False,
+    session_ist: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Fetch 1m and 15m data from Yahoo Finance (free), session 7–11 EST.
-    Returns (df_1m, df_15m). Tries 1m first; if all fail, tries 15m and expands to 1m.
-    If months=1 (or more), fetches 15m for that window and expands to 1m. Yahoo allows 15m only
-    within the last 60 days, so --live --months is effectively capped at 2 months.
+    Fetch 1m and 15m data from Yahoo Finance (free).
+    By default session 7–11 EST; session_24_7=True = all hours; session_ist=True = IST 8 PM–11:30 PM.
+    Returns (df_1m, df_15m).
     """
+    session_filter = not session_24_7
     if months is not None and months >= 1:
-        # 1+ month: use 15m only. Yahoo allows 15m only within last 60 days, so cap at 60d
         period = "1mo" if months == 1 else "60d"
         for symbol in symbols:
-            df_15m = fetch_yfinance_15m(symbol=symbol, period=period)
+            df_15m = fetch_yfinance_15m(symbol=symbol, period=period, session_filter=session_filter, session_ist=session_ist)
             if not df_15m.empty and len(df_15m) >= 20:
-                df_15m = _session_filter(df_15m)
                 if len(df_15m) >= 20:
                     df_1m = _expand_15m_to_1m(df_15m)
-                    logger.info("Using 15m data (%s) expanded to 1m: %d bars (session 7–11 EST)", period, len(df_1m))
+                    session_note = "24/7" if session_24_7 else ("IST 8PM–11:30PM" if session_ist else "session 7–11 EST")
+                    logger.info("Using 15m data (%s) expanded to 1m: %d bars (%s)", period, len(df_1m), session_note)
                     return df_1m, df_15m
         return pd.DataFrame(), pd.DataFrame()
 
     df_1m = pd.DataFrame()
     df_15m = pd.DataFrame()
     for symbol in symbols:
-        df_1m = fetch_yfinance_1m(symbol=symbol, period=period_1m)
+        df_1m = fetch_yfinance_1m(symbol=symbol, period=period_1m, session_filter=session_filter, session_ist=session_ist)
         if not df_1m.empty:
-            df_15m = fetch_yfinance_15m(symbol=symbol, period=period_15m)
+            df_15m = fetch_yfinance_15m(symbol=symbol, period=period_15m, session_filter=session_filter, session_ist=session_ist)
             if df_15m.empty or len(df_15m) < 20:
                 df_15m = df_1m.resample("15min").agg({
                     "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum",
                 }).dropna(how="all")
-                df_15m = _session_filter(df_15m)
+                if session_filter:
+                    df_15m = _session_filter(df_15m, session_ist=session_ist)
             break
         logger.warning("No 1m data for %s, trying next symbol.", symbol)
-    # Fallback: try 15m only (Yahoo often blocks 1m but allows 15m)
     if df_1m.empty:
         for symbol in symbols:
-            df_15m = fetch_yfinance_15m(symbol=symbol, period=period_15m or "60d")
+            df_15m = fetch_yfinance_15m(symbol=symbol, period=period_15m or "60d", session_filter=session_filter, session_ist=session_ist)
             if not df_15m.empty and len(df_15m) >= 20:
-                df_15m = _session_filter(df_15m)
-                if len(df_15m) >= 20:
-                    df_1m = _expand_15m_to_1m(df_15m)
-                    logger.info("Using 15m data expanded to 1m (symbol=%s, %d bars)", symbol, len(df_1m))
-                    break
+                df_1m = _expand_15m_to_1m(df_15m)
+                session_note = "24/7" if session_24_7 else ("IST 8PM–11:30PM" if session_ist else "session")
+                logger.info("Using 15m data expanded to 1m (symbol=%s, %d bars, %s)", symbol, len(df_1m), session_note)
+                break
     if not df_1m.empty and (df_15m.empty or len(df_15m) < 20):
         df_15m = df_1m.resample("15min").agg({
             "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum",
         }).dropna(how="all")
-        df_15m = _session_filter(df_15m)
+        if session_filter:
+            df_15m = _session_filter(df_15m, session_ist=session_ist)
     return df_1m, df_15m
