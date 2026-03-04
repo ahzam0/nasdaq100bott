@@ -1,5 +1,21 @@
 # Real Backtest Data – 3 Month (MNQ Riley Coleman)
 
+**Target stats (original preset)** – what to aim for:
+| Metric | Target |
+|--------|--------|
+| Total return | +35.46% |
+| Net P&L | +$17,729.25 |
+| Final balance | $67,729.25 (from $50,000) |
+| Total trades | 54 (28 W / 26 L) |
+| Win rate | 51.9% |
+| Max drawdown | $2,125 (3.06%) |
+| Profit factor | 4.98 |
+| Avg R per trade | 0.24R |
+
+**Reproduce:** `python run_backtest.py --live --months 3 --balance 50000 --risk 380` with config: `SKIP_FIRST_MINUTES = 0`, `MIN_RR_RATIO = 1.8`, `MIN_BODY_PTS = 0`, `MAX_RISK_PTS = 350`. Results vary with the current 3-month window.
+
+---
+
 **Data**: Yahoo Finance NQ=F, 7–11 EST session, 1m bars from 15m expansion.  
 **Config**: Balance $50,000, **risk $380/trade**, `MAX_RISK_PTS = 350`, `MIN_RR_RATIO = 1.8`, `LEVEL_TOLERANCE_PTS = 8`, `SKIP_FIRST_MINUTES = 0`, `MIN_BODY_PTS = 0`. No order flow proxy.
 
