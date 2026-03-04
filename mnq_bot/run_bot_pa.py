@@ -43,7 +43,7 @@ if not os.environ.get("CRON_SECRET"):
 from flask import Flask, request, Response
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from bot import register_commands
-from telegram import Update
+from telegram import Bot, Update
 from telegram.ext import Application
 
 app = Flask(__name__)
@@ -71,6 +71,25 @@ def webhook():
     except Exception as e:
         return Response("Error", status=500)
 
+async def _run_scan_with_fresh_bot():
+    """Run scan + trailing + daily summary using a Bot created in this event loop (avoids 'Event loop is closed')."""
+    bot = Bot(TELEGRAM_BOT_TOKEN)
+    import main
+    await main.run_scan(bot)
+    await main.run_trailing(bot)
+    from bot.scheduler import now_est
+    from config import DAILY_SUMMARY_HOUR
+    now = now_est()
+    if now.hour == DAILY_SUMMARY_HOUR and now.minute < 2:
+        from main import daily_summary_job
+        class Ctx:
+            class App:
+                pass
+            application = App()
+            application.bot = bot
+        await daily_summary_job(Ctx())
+
+
 @app.route("/cron/scan", methods=["GET", "POST"])
 def cron_scan():
     secret = os.getenv("CRON_SECRET", "").strip()
@@ -79,22 +98,7 @@ def cron_scan():
     try:
         from utils import setup_logging
         setup_logging()
-        import main
-        ptb = get_ptb_app()
-        bot = ptb.bot
-        asyncio.run(main.run_scan(bot))
-        asyncio.run(main.run_trailing(bot))
-        from bot.scheduler import now_est
-        from config import DAILY_SUMMARY_HOUR
-        now = now_est()
-        if now.hour == DAILY_SUMMARY_HOUR and now.minute < 2:
-            from main import daily_summary_job
-            class Ctx:
-                class App:
-                    pass
-                application = App()
-                application.bot = bot
-            asyncio.run(daily_summary_job(Ctx()))
+        asyncio.run(_run_scan_with_fresh_bot())
         return Response("OK", status=200)
     except Exception as e:
         return Response("Error", status=500)
@@ -127,26 +131,11 @@ def set_webhook_route():
 
 
 def _run_scan_once():
-    """Run scan + trailing + daily summary (same as /cron/scan). No external cron needed."""
+    """Run scan + trailing + daily summary (same as /cron/scan). Uses fresh Bot in this loop to avoid 'Event loop is closed'."""
     try:
         from utils import setup_logging
         setup_logging()
-        import main
-        ptb = get_ptb_app()
-        bot = ptb.bot
-        asyncio.run(main.run_scan(bot))
-        asyncio.run(main.run_trailing(bot))
-        from bot.scheduler import now_est
-        from config import DAILY_SUMMARY_HOUR
-        now = now_est()
-        if now.hour == DAILY_SUMMARY_HOUR and now.minute < 2:
-            from main import daily_summary_job
-            class Ctx:
-                class App:
-                    pass
-                application = App()
-                application.bot = bot
-            asyncio.run(daily_summary_job(Ctx()))
+        asyncio.run(_run_scan_with_fresh_bot())
     except Exception:
         pass
 
