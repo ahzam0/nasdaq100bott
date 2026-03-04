@@ -1,0 +1,2 @@
+# Railway / Railpack: install from mnq_bot (app lives in subfolder)
+-r mnq_bot/requirements.txt
