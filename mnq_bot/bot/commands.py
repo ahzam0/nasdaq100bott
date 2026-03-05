@@ -214,10 +214,10 @@ def get_main_keyboard():
         [
             [KeyboardButton("▶ Start"), KeyboardButton("⏸ Pause")],
             [KeyboardButton("📊 Status"), KeyboardButton("🔍 Scan status")],
-            [KeyboardButton("📌 Levels"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
-            [KeyboardButton("📋 History"), KeyboardButton("📊 Order flow"), KeyboardButton("🔌 APIs")],
-            [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity"), KeyboardButton("🌡 VIX")],
-            [KeyboardButton("🤖 ML"), KeyboardButton("🌐 Dashboard"), KeyboardButton("❓ Help")],
+            [KeyboardButton("📂 Positions"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
+            [KeyboardButton("📌 Levels"), KeyboardButton("📋 History"), KeyboardButton("🔌 APIs")],
+            [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity"), KeyboardButton("📊 Order flow")],
+            [KeyboardButton("🌡 VIX"), KeyboardButton("🤖 ML"), KeyboardButton("❓ Help")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
@@ -285,6 +285,92 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         s = t.get("stop", 0)
         lines.append(f"  • {d} @ <code>{e:,.2f}</code>  Stop <code>{s:,.2f}</code>")
     lines.append(f"\n<i>Session 7:00–11:00 AM EST</i>")
+    await _reply_html(update, "\n".join(lines))
+
+
+async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show live running P&L for all open positions."""
+    logger.info("/positions from user %s", update.effective_user.id if update.effective_user else "?")
+    active = _bot_state["active_trades"]
+    if not active:
+        await _reply_html(
+            update,
+            "<b>📂 Open Positions</b>\n"
+            "────────────────────\n"
+            "No open positions right now.\n\n"
+            "<i>Positions appear here when the bot enters a trade.</i>"
+        )
+        return
+
+    loop = asyncio.get_event_loop()
+    price_str, feed_type = await loop.run_in_executor(None, _fetch_live_price_sync)
+
+    current_price = None
+    if price_str:
+        try:
+            current_price = float(price_str.replace(",", ""))
+        except ValueError:
+            pass
+
+    from config import TICK_VALUE_USD
+    total_pnl = 0.0
+    lines = [
+        f"<b>📂 Open Positions ({len(active)})</b>",
+        "────────────────────",
+    ]
+    if price_str:
+        lines.append(f"NQ Price <code>{price_str}</code>  <i>({_esc(feed_type)})</i>")
+        lines.append("")
+
+    for item in active:
+        trade = item.get("trade")
+        if trade is None:
+            continue
+        direction = trade.direction
+        entry = trade.entry
+        stop = trade.current_stop
+        contracts = trade.contracts
+        arrow = "🟢" if direction == "LONG" else "🔴"
+
+        if current_price is not None:
+            pnl = trade.pnl_at_price(current_price)
+            rr = trade.rr_at_price(current_price)
+            total_pnl += pnl
+            pnl_sign = "+" if pnl >= 0 else ""
+            rr_sign = "+" if rr >= 0 else ""
+            pnl_emoji = "🟩" if pnl >= 0 else "🟥"
+            lines.append(
+                f"{arrow} <b>{direction}</b>  ×{contracts}\n"
+                f"  Entry <code>{entry:,.2f}</code>  Stop <code>{stop:,.2f}</code>\n"
+                f"  TP1 <code>{trade.target1:,.2f}</code>  TP2 <code>{trade.target2:,.2f}</code>\n"
+                f"  {pnl_emoji} P&L <b><code>{pnl_sign}${pnl:,.2f}</code></b>  "
+                f"R <code>{rr_sign}{rr:.2f}R</code>"
+            )
+        else:
+            lines.append(
+                f"{arrow} <b>{direction}</b>  ×{contracts}\n"
+                f"  Entry <code>{entry:,.2f}</code>  Stop <code>{stop:,.2f}</code>\n"
+                f"  TP1 <code>{trade.target1:,.2f}</code>  TP2 <code>{trade.target2:,.2f}</code>\n"
+                f"  <i>Price unavailable</i>"
+            )
+
+    if current_price is not None and len(active) > 1:
+        lines.append("")
+        pnl_sign = "+" if total_pnl >= 0 else ""
+        lines.append(f"<b>Total P&L  <code>{pnl_sign}${total_pnl:,.2f}</code></b>")
+
+    if current_price is not None:
+        lines.append("")
+        total_sign = "+" if total_pnl >= 0 else ""
+        combined = _bot_state.get("daily_pnl", 0.0) + total_pnl
+        combined_sign = "+" if combined >= 0 else ""
+        lines.append(
+            f"Closed P&L <code>${_bot_state.get('daily_pnl', 0.0):+,.0f}</code>  │  "
+            f"Open <code>{total_sign}${total_pnl:,.0f}</code>  │  "
+            f"Day <code>{combined_sign}${combined:,.0f}</code>"
+        )
+
+    lines.append(f"\n<i>Updated {now_est().strftime('%I:%M:%S %p EST')}</i>")
     await _reply_html(update, "\n".join(lines))
 
 
@@ -603,6 +689,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/help</code> – This message\n\n"
         "<b>Info</b>\n"
         "<code>/status</code> – Scan state, trades, P&L\n"
+        "<code>/positions</code> – Live open P&L per position\n"
         "<code>/levels</code> – Today's key levels\n"
         "<code>/price</code> – Live MNQ price\n"
         "<code>/pnl</code> – Daily/weekly P&L\n"
@@ -1008,6 +1095,7 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
         "⏸ Pause": cmd_stop,
         "📊 Status": cmd_status,
         "🔍 Scan status": cmd_scan_status,
+        "📂 Positions": cmd_positions,
         "📌 Levels": cmd_levels,
         "📈 P&L": cmd_pnl,
         "📋 History": cmd_history,
@@ -1136,6 +1224,7 @@ def register_commands(application):
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("stop", cmd_stop))
     application.add_handler(CommandHandler("status", cmd_status))
+    application.add_handler(CommandHandler("positions", cmd_positions))
     application.add_handler(CommandHandler("scanstatus", cmd_scan_status))
     application.add_handler(CommandHandler("levels", cmd_levels))
     application.add_handler(CommandHandler("price", cmd_live_price))
