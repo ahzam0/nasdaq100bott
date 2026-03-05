@@ -16,6 +16,9 @@ from .ml_filter import (
     ml_filter_check,
     train_from_history,
 )
+from .volume_flow import VolumeFlowSignal, compute_volume_flow
+from .scalp import ScalpSetup, ScalpSignalType, detect_scalp
+from .smart_money import SmartMoneyScore, compute_smart_money_score
 
 __all__ = [
     "KeyLevels", "build_key_levels",
@@ -25,4 +28,7 @@ __all__ = [
     "ChecklistResult", "validate_entry", "in_trading_window", "check_orderflow",
     "ActiveTrade", "TradeStatus", "next_milestone_to_trail", "stop_for_milestone",
     "extract_features", "score_setup", "ml_filter_check", "train_from_history",
+    "VolumeFlowSignal", "compute_volume_flow",
+    "ScalpSetup", "ScalpSignalType", "detect_scalp",
+    "SmartMoneyScore", "compute_smart_money_score",
 ]

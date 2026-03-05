@@ -81,14 +81,82 @@ def push():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/orderflow/realtime")
+def realtime_flow():
+    """Full real-time order flow from actual trade data (Alpaca/Finnhub)."""
+    try:
+        from data.orderflow_engine import compute_realtime_flow
+        flow = compute_realtime_flow()
+        if flow is None:
+            return jsonify({"error": "No real-time data available", "is_real": False}), 200
+        return jsonify({
+            "is_real": flow.is_real,
+            "source": flow.source,
+            "data_age_seconds": round(flow.data_age_seconds, 2),
+            "trade_count": flow.trade_count,
+            "volume_delta": flow.volume_delta,
+            "cumulative_delta": flow.cumulative_delta,
+            "buy_volume": flow.buy_volume,
+            "sell_volume": flow.sell_volume,
+            "imbalance_ratio": round(flow.imbalance_ratio, 4),
+            "vwap": round(flow.vwap, 2),
+            "price_vs_vwap": round(flow.price_vs_vwap, 2),
+            "tape_speed": round(flow.tape_speed, 2),
+            "cvd_slope": round(flow.cvd_slope, 2),
+            "delta_divergence": flow.delta_divergence,
+            "divergence_type": flow.divergence_type,
+            "absorption_detected": flow.absorption_detected,
+            "absorption_level": flow.absorption_level,
+            "absorption_side": flow.absorption_side,
+            "large_order_bias": flow.large_order_bias,
+            "large_orders_count": len(flow.large_orders),
+            "poc_price": round(flow.poc_price, 2),
+        })
+    except Exception as e:
+        logger.warning("Realtime flow error: %s", e)
+        return jsonify({"error": str(e), "is_real": False}), 500
+
+
+@app.route("/orderflow/large_trades")
+def large_trades():
+    """Recent large (institutional) trades."""
+    try:
+        from data.orderflow_engine import compute_realtime_flow
+        flow = compute_realtime_flow()
+        if flow is None or not flow.large_orders:
+            return jsonify({"trades": [], "source": "none"})
+        trades = [{
+            "time": lo.timestamp,
+            "price": round(lo.price_nq, 2),
+            "size": lo.size,
+            "side": lo.side,
+            "multiple": round(lo.multiple_of_avg, 1),
+        } for lo in flow.large_orders[-10:]]
+        return jsonify({"trades": trades, "bias": flow.large_order_bias, "source": flow.source})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/orderflow/health")
 def health():
     s = _store().get_summary()
+    # Check real-time collector status
+    rt_source = "none"
+    rt_connected = False
+    try:
+        from data.realtime_collector import get_collector_manager
+        mgr = get_collector_manager()
+        rt_source = mgr.source
+        rt_connected = mgr.connected
+    except Exception:
+        pass
     return jsonify({
         "status": "ok",
         "service": "mnq-orderflow-api",
         "trade_count": s.trade_count,
         "source": s.source,
+        "realtime_source": rt_source,
+        "realtime_connected": rt_connected,
     })
 
 
@@ -196,19 +264,45 @@ def _start_tradovate_bridge_if_requested():
         logger.warning("Could not start Tradovate order flow bridge: %s", e)
 
 
+def _start_realtime_collectors():
+    """Start Alpaca/Finnhub real-time collectors if API keys are configured."""
+    try:
+        from data.realtime_collector import get_collector_manager
+        from config import (
+            ALPACA_DATA_API_KEY, ALPACA_DATA_SECRET_KEY, FINNHUB_API_KEY,
+        )
+        mgr = get_collector_manager()
+        desc = mgr.start(
+            alpaca_key=ALPACA_DATA_API_KEY,
+            alpaca_secret=ALPACA_DATA_SECRET_KEY,
+            finnhub_key=FINNHUB_API_KEY,
+        )
+        logger.info("Real-time collectors: %s", desc)
+    except ImportError as e:
+        logger.debug("Real-time collector config not available: %s", e)
+    except Exception as e:
+        logger.warning("Could not start real-time collectors: %s", e)
+
+
 def main():
     port = int(os.getenv("MNQ_ORDERFLOW_PORT", "5002"))
     host = os.getenv("MNQ_ORDERFLOW_HOST", "127.0.0.1")
     want_polygon = bool(os.getenv("POLYGON_API_KEY", "").strip()) and os.getenv("MNQ_ORDERFLOW_FROM_POLYGON", "").lower() in ("1", "true", "yes")
     want_tradovate = os.getenv("MNQ_ORDERFLOW_FROM_TRADOVATE", "").lower() in ("1", "true", "yes")
     logger.info("Order Flow API starting on http://%s:%s", host, port)
+
+    # Start real-time collectors (Alpaca/Finnhub)
+    _start_realtime_collectors()
+
     if want_polygon:
         _start_polygon_bridge_if_requested()
     if want_tradovate:
         _start_tradovate_bridge_if_requested()
     if not want_polygon and not want_tradovate:
-        start_simulated_feed()
-        logger.info("Order flow: no API key — using simulated feed from free price/candle data (same as bot).")
+        from data.realtime_collector import get_collector_manager
+        if not get_collector_manager().connected:
+            start_simulated_feed()
+            logger.info("Order flow: no API key — using simulated feed from free price/candle data (same as bot).")
     app.run(host=host, port=port, threaded=True, use_reloader=False)
 
 

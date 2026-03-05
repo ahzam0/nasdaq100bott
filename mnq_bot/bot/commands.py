@@ -20,10 +20,17 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQ
 from .alerts import format_trade_alert, format_trail_alert, send_telegram, send_telegram_all, send_photo_all, format_weekly_report
 from .scheduler import now_est
 from config import (
+    ACTIVE_STRATEGY,
     DEFAULT_CONTRACTS,
     INSTRUMENT,
     MAX_RISK_PER_TRADE_USD,
     MAX_TRADES_PER_DAY,
+    SCALP_MAX_TRADES_PER_DAY,
+    SCALP_TP1_PTS,
+    SCALP_TP2_PTS,
+    SCALP_MAX_RISK_PTS,
+    SCALP_MIN_ATR,
+    SCALP_MOMENTUM_THRESHOLD,
     TELEGRAM_CHAT_ID,
     TELEGRAM_CHAT_IDS,
     TRAIL_ALERTS_ENABLED,
@@ -105,6 +112,8 @@ def _load_trade_data():
             out["trades_today"] = max(0, data["trades_today"])
         if isinstance(data.get("last_trade_date"), str):
             out["last_trade_date"] = data["last_trade_date"]
+        if isinstance(data.get("active_strategy"), str) and data["active_strategy"] in ("riley", "scalp"):
+            out["active_strategy"] = data["active_strategy"]
         if isinstance(data.get("active_trades"), list):
             restored = []
             for i, item in enumerate(data["active_trades"]):
@@ -156,6 +165,7 @@ def save_trade_state():
             "daily_pnl": _bot_state.get("daily_pnl", 0.0),
             "trades_today": _bot_state.get("trades_today", 0),
             "last_trade_date": _bot_state.get("last_trade_date", ""),
+            "active_strategy": _bot_state.get("active_strategy", ACTIVE_STRATEGY),
         }
         with open(TRADE_DATA_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -178,6 +188,7 @@ _bot_state = {
     "trade_history": [],
     "total_scans": 0,
     "last_trade_date": "",
+    "active_strategy": ACTIVE_STRATEGY,
 }
 # Load persisted risk/contracts
 for k, v in _load_persisted_state().items():
@@ -201,7 +212,7 @@ def maybe_reset_daily():
         _bot_state["total_scans"] = 0
         save_trade_state()
 
-BOT_VERSION = "2.1.0"
+BOT_VERSION = "2.3.0"
 
 
 def get_state():
@@ -217,7 +228,8 @@ def get_main_keyboard():
             [KeyboardButton("📂 Positions"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
             [KeyboardButton("📌 Levels"), KeyboardButton("📋 History"), KeyboardButton("🔌 APIs")],
             [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity"), KeyboardButton("📊 Order flow")],
-            [KeyboardButton("🌡 VIX"), KeyboardButton("🤖 ML"), KeyboardButton("❓ Help")],
+            [KeyboardButton("🔄 Strategy"), KeyboardButton("🧠 Smart Money"), KeyboardButton("🤖 ML")],
+            [KeyboardButton("🌡 VIX"), KeyboardButton("❓ Help")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
@@ -264,10 +276,14 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     loop = asyncio.get_event_loop()
     price_line, feed_type = await loop.run_in_executor(None, _fetch_live_price_sync)
 
+    strat = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
+    strat_label = "⚡ Scalp" if strat == "scalp" else "📐 Riley Coleman"
+    effective_max = SCALP_MAX_TRADES_PER_DAY if strat == "scalp" else MAX_TRADES_PER_DAY
     lines = [
         f"<b>📊 {INSTRUMENT} Bot Status</b>",
         "────────────────────",
         f"Mode  <b>LIVE</b>",
+        f"Strategy  <b>{strat_label}</b>",
         f"Feed  <b>{_esc(feed_type)}</b>",
     ]
     if price_line:
@@ -275,7 +291,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     lines += [
         "",
         f"Scan <b>{scan}</b>  │  Scans <code>{total_scans}</code>",
-        f"Trades today <code>{_bot_state['trades_today']}</code> / {MAX_TRADES_PER_DAY}",
+        f"Trades today <code>{_bot_state['trades_today']}</code> / {effective_max}",
         f"Daily P&L <code>${_bot_state['daily_pnl']:+,.0f}</code>",
         f"Active trades <b>{len(active)}</b>",
     ]
@@ -904,6 +920,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/version</code> – Bot version\n"
         "<code>/backtest [days]</code> – Run short backtest (default 2 days)\n\n"
         "<b>Advanced</b>\n"
+        "<code>/strategy</code> – Switch between Riley Coleman / Scalp\n"
+        "<code>/smartmoney</code> – Smart Money Score (6 sources)\n"
         "<code>/chart</code> – Live chart with key levels\n"
         "<code>/equity</code> – Equity curve chart + stats\n"
         "<code>/vix</code> – VIX filter status\n"
@@ -1248,6 +1266,86 @@ async def cmd_ml(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _reply_html(update, f"<b>ML Filter:</b> {_esc(str(e))}")
 
 
+def _smart_money_sync() -> dict:
+    """Compute Smart Money Score (blocking, for executor)."""
+    try:
+        from strategy.smart_money import compute_smart_money_score
+        sm = compute_smart_money_score(force_refresh=True)
+        return {
+            "score": sm.score,
+            "bias": sm.bias,
+            "confidence": sm.confidence,
+            "options_bias": sm.options_bias,
+            "internals_bias": sm.internals_bias,
+            "premarket_bias": sm.premarket_bias,
+            "insider_bias": sm.insider_bias,
+            "institutional_bias": sm.institutional_bias,
+            "pcr": sm.pcr,
+            "components": sm.components,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def cmd_smartmoney(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current Smart Money Score with all components."""
+    logger.info("/smartmoney from user %s", update.effective_user.id if update.effective_user else "?")
+    await _reply_html(update, "<b>Computing Smart Money Score...</b>")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _smart_money_sync)
+
+    if result.get("error"):
+        await _reply_html(update, f"<b>Smart Money Error:</b> {_esc(result['error'])}")
+        return
+
+    score = result["score"]
+    bias = result["bias"]
+    conf = result["confidence"]
+    pcr = result["pcr"]
+    components = result.get("components", {})
+
+    bias_emoji = {
+        "STRONG_BULL": "🟢🟢",
+        "BULL": "🟢",
+        "NEUTRAL": "⚪",
+        "BEAR": "🔴",
+        "STRONG_BEAR": "🔴🔴",
+    }.get(bias, "⚪")
+
+    def _bias_icon(b: str) -> str:
+        return {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "⚪"}.get(b, "⚪")
+
+    lines = [
+        "<b>🧠 Smart Money Score</b>",
+        "────────────────────",
+        f"Score  <b><code>{score:+.1f}</code></b>  {bias_emoji} <b>{bias.replace('_', ' ')}</b>",
+        f"Confidence  <code>{conf:.0%}</code>",
+        "",
+        "<b>Components</b>",
+        f"  {_bias_icon(result['options_bias'])} Options Flow  <code>{components.get('options', 0):+.0f}</code>  ({result['options_bias']})",
+        f"  {_bias_icon(result['internals_bias'])} Market Internals  <code>{components.get('internals', 0):+.0f}</code>  ({result['internals_bias']})",
+        f"  {_bias_icon(result['premarket_bias'])} Pre-Market Levels  <code>{components.get('premarket', 0):+.0f}</code>  ({result['premarket_bias']})",
+        f"  {'🟢' if pcr < 0.8 else '🔴' if pcr > 1.1 else '⚪'} Put/Call Ratio  <code>{pcr:.2f}</code>  <code>{components.get('pcr', 0):+.0f}</code>",
+        f"  {_bias_icon(result['insider_bias'])} Insider Filings  <code>{components.get('insider', 0):+.0f}</code>  ({result['insider_bias']})",
+        f"  {_bias_icon(result['institutional_bias'])} 13F Holdings  <code>{components.get('institutional', 0):+.0f}</code>  ({result['institutional_bias']})",
+        "",
+        "<b>Weights</b>",
+        "  Options 30% | Internals 25% | Pre-Market 20%",
+        "  P/C Ratio 10% | Insider 10% | 13F 5%",
+        "",
+    ]
+
+    if score > 20:
+        lines.append("<i>Scalp bias: prefer LONG entries</i>")
+    elif score < -20:
+        lines.append("<i>Scalp bias: prefer SHORT entries</i>")
+    else:
+        lines.append("<i>Scalp bias: no strong directional edge</i>")
+
+    lines.append(f"\n<i>Updated {now_est().strftime('%I:%M %p EST')}</i>")
+    await _reply_html(update, "\n".join(lines))
+
+
 async def cmd_instruments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show configured instruments."""
     from config import INSTRUMENTS, ACTIVE_INSTRUMENTS
@@ -1273,6 +1371,96 @@ async def cmd_dashboard_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current strategy and inline buttons to switch."""
+    logger.info("/strategy from user %s", update.effective_user.id if update.effective_user else "?")
+    current = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
+    if current == "scalp":
+        label = "⚡ Quick Scalp (Volume Flow + Smart Money)"
+        # Check real-time data source
+        rt_source = "Candle proxy (no API keys)"
+        try:
+            from data.realtime_collector import get_collector_manager
+            mgr = get_collector_manager()
+            if mgr.connected:
+                rt_source = mgr.source
+        except Exception:
+            pass
+        # Get Smart Money Score summary
+        sm_line = ""
+        try:
+            from strategy.smart_money import compute_smart_money_score
+            sm = compute_smart_money_score()
+            sm_line = f"\nSmart Money: {sm.score:+.0f} ({sm.bias})"
+        except Exception:
+            sm_line = "\nSmart Money: loading..."
+        desc = (
+            f"Targets: +{SCALP_TP1_PTS:.0f} / +{SCALP_TP2_PTS:.0f} pts\n"
+            f"Max risk: {SCALP_MAX_RISK_PTS:.0f} pts  |  Max trades/day: {SCALP_MAX_TRADES_PER_DAY}\n"
+            f"Min ATR: {SCALP_MIN_ATR:.0f}  |  Momentum: {SCALP_MOMENTUM_THRESHOLD:.0f}\n"
+            f"Data: {rt_source}{sm_line}"
+        )
+    else:
+        label = "📐 Riley Coleman (Reversal)"
+        desc = (
+            f"Max risk: {MAX_RISK_PER_TRADE_USD}  |  Max trades/day: {MAX_TRADES_PER_DAY}\n"
+            "Level-retest reversal with trend confirmation"
+        )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📐 Riley Coleman", callback_data="strategy_riley"),
+            InlineKeyboardButton("⚡ Quick Scalp", callback_data="strategy_scalp"),
+        ]
+    ])
+
+    await _reply_html(
+        update,
+        f"<b>🔄 Active Strategy</b>\n"
+        f"────────────────────\n"
+        f"<b>{label}</b>\n\n"
+        f"<code>{desc}</code>\n\n"
+        f"<i>Tap a button below to switch:</i>",
+        reply_markup=keyboard,
+    )
+
+
+async def callback_strategy_switch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline button callback for strategy switching."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if data == "strategy_riley":
+        new_strat = "riley"
+        label = "📐 Riley Coleman (Reversal)"
+    elif data == "strategy_scalp":
+        new_strat = "scalp"
+        label = "⚡ Quick Scalp (Volume Flow)"
+    else:
+        return
+
+    old_strat = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
+    _bot_state["active_strategy"] = new_strat
+    _bot_state["last_scalp_trade_ts"] = None
+    save_trade_state()
+
+    if old_strat == new_strat:
+        await query.edit_message_text(
+            f"<b>🔄 Strategy unchanged</b>\n\nAlready on <b>{label}</b>",
+            parse_mode="HTML",
+        )
+    else:
+        logger.info("Strategy switched: %s → %s by user %s", old_strat, new_strat,
+                     update.effective_user.id if update.effective_user else "?")
+        await query.edit_message_text(
+            f"<b>✅ Strategy switched</b>\n\n"
+            f"Now using <b>{label}</b>\n\n"
+            f"<i>Next scan will use the new strategy.</i>",
+            parse_mode="HTML",
+        )
+
+
 async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route button text to the right command."""
     text = (update.message and update.message.text or "").strip()
@@ -1294,6 +1482,8 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
         "🔌 APIs": cmd_apis,
         "📉 Chart": cmd_chart,
         "📈 Equity": cmd_equity,
+        "🔄 Strategy": cmd_strategy,
+        "🧠 Smart Money": cmd_smartmoney,
         "🌡 VIX": cmd_vix,
         "🤖 ML": cmd_ml,
         "🌐 Dashboard": cmd_dashboard_info,
@@ -1444,7 +1634,10 @@ def register_commands(application):
     application.add_handler(CommandHandler("ml", cmd_ml))
     application.add_handler(CommandHandler("instruments", cmd_instruments))
     application.add_handler(CommandHandler("dashboard", cmd_dashboard_info))
+    application.add_handler(CommandHandler("strategy", cmd_strategy))
+    application.add_handler(CommandHandler("smartmoney", cmd_smartmoney))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("pause", cmd_stop))
+    application.add_handler(CallbackQueryHandler(callback_strategy_switch, pattern="^strategy_"))
     application.add_handler(CallbackQueryHandler(callback_feed_toggle, pattern="^yahoo_ws_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_button))

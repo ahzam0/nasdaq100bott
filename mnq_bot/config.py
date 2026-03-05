@@ -132,6 +132,18 @@ ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 ALPACA_BASE_URL = "https://paper-api.alpaca.markets"  # or live
 
+# Alpaca Market Data API (free tier: real-time IEX trades + quotes for QQQ)
+# Sign up free at https://alpaca.markets → Paper account → API keys
+ALPACA_DATA_API_KEY = os.getenv("ALPACA_DATA_API_KEY", "").strip() or ALPACA_API_KEY
+ALPACA_DATA_SECRET_KEY = os.getenv("ALPACA_DATA_SECRET_KEY", "").strip() or ALPACA_SECRET_KEY
+
+# Finnhub (free tier: real-time US stock trades for QQQ)
+# Sign up free at https://finnhub.io → Dashboard → API token
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
+
+# Real-time order flow: enable Alpaca/Finnhub WebSocket collectors for true order flow
+REALTIME_ORDERFLOW_ENABLED = os.getenv("MNQ_REALTIME_ORDERFLOW", "true").lower() in ("1", "true", "yes")
+
 # Free price: Yahoo WebSocket = minimal delay but uses threads (can fail on Railway etc.).
 # Default false = live price via Yahoo REST (updated every scan, no extra threads). Set true for WebSocket if host allows.
 USE_YAHOO_WS_REALTIME = os.getenv("MNQ_YAHOO_WS_REALTIME", "false").lower() in ("1", "true", "yes")
@@ -204,6 +216,21 @@ INSTRUMENTS = {
     "MYM": {"tick_value": 0.50, "symbol": "YM=F", "round_step": 100, "name": "Micro E-mini Dow"},
 }
 ACTIVE_INSTRUMENTS = [x.strip() for x in os.getenv("MNQ_ACTIVE_INSTRUMENTS", "MNQ").split(",") if x.strip()]
+
+# Active strategy: "riley" (Riley Coleman reversal) or "scalp" (quick volume-flow scalp)
+ACTIVE_STRATEGY = os.getenv("MNQ_ACTIVE_STRATEGY", "riley").strip().lower()
+
+# Scalp strategy parameters
+SCALP_MAX_TRADES_PER_DAY = int(os.getenv("MNQ_SCALP_MAX_TRADES", "8"))
+SCALP_MAX_RISK_PTS = float(os.getenv("MNQ_SCALP_MAX_RISK", "60"))
+SCALP_TP1_PTS = float(os.getenv("MNQ_SCALP_TP1", "40"))
+SCALP_TP2_PTS = float(os.getenv("MNQ_SCALP_TP2", "80"))
+SCALP_COOLDOWN_BARS = int(os.getenv("MNQ_SCALP_COOLDOWN", "3"))
+SCALP_MIN_ATR = float(os.getenv("MNQ_SCALP_MIN_ATR", "15.0"))
+SCALP_MOMENTUM_THRESHOLD = float(os.getenv("MNQ_SCALP_MOMENTUM", "40"))
+
+# Smart Money System
+SMART_MONEY_ENABLED = os.getenv("MNQ_SMART_MONEY", "true").lower() in ("1", "true", "yes")
 
 # Logging
 LOG_LEVEL = "INFO"

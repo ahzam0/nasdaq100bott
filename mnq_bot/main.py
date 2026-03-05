@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config import (
+    ACTIVE_STRATEGY,
     AUTO_EXECUTE,
     BROKER,
     INSTRUMENT,
@@ -69,6 +70,17 @@ from config import (
     ML_FILTER_THRESHOLD,
     WEEKLY_REPORT_DAY,
     WEEKLY_REPORT_HOUR,
+    SCALP_MAX_TRADES_PER_DAY,
+    SCALP_MAX_RISK_PTS,
+    SCALP_TP1_PTS,
+    SCALP_TP2_PTS,
+    SCALP_COOLDOWN_BARS,
+    SCALP_MIN_ATR,
+    SCALP_MOMENTUM_THRESHOLD,
+    REALTIME_ORDERFLOW_ENABLED,
+    ALPACA_DATA_API_KEY,
+    ALPACA_DATA_SECRET_KEY,
+    FINNHUB_API_KEY,
 )
 from data import get_feed
 from strategy import (
@@ -80,6 +92,9 @@ from strategy import (
     ActiveTrade,
     next_milestone_to_trail,
     stop_for_milestone,
+    compute_volume_flow,
+    detect_scalp,
+    compute_smart_money_score,
 )
 from bot import (
     register_commands,
@@ -184,8 +199,12 @@ async def run_scan(bot=None):
     if not in_scan_window():
         return
 
-    if state["trades_today"] >= MAX_TRADES_PER_DAY:
-        logger.debug("Scan skipped: trades_today=%d >= max=%d", state["trades_today"], MAX_TRADES_PER_DAY)
+    active_strat = state.get("active_strategy", ACTIVE_STRATEGY)
+    is_scalp = (active_strat == "scalp")
+    max_trades = SCALP_MAX_TRADES_PER_DAY if is_scalp else MAX_TRADES_PER_DAY
+
+    if state["trades_today"] >= max_trades:
+        logger.debug("Scan skipped: trades_today=%d >= max=%d (%s)", state["trades_today"], max_trades, active_strat)
         return
 
     # VIX filter: block or reduce risk on high volatility days
@@ -261,46 +280,104 @@ async def run_scan(bot=None):
     trend = trend_from_structure(df_15m, swing_highs, swing_lows)
     current_price = feed.get_current_price()
 
-    setup = detect_setup(
-        df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
-        level_tolerance_pts=LEVEL_TOLERANCE_PTS,
-        require_trend_only=REQUIRE_TREND_ONLY,
-        retest_only=RETEST_ONLY,
-        min_body_pts=MIN_BODY_PTS,
-    )
-    if setup is None:
-        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup")
-        return
+    # ── Strategy branch ────────────────────────────────────────────────
+    setup = None
+    setup_name_label = ""
+
+    if is_scalp:
+        # --- Scalp strategy: volume-flow proxy signals ---
+        flow = compute_volume_flow(df_1m)
+        if flow is None:
+            await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No flow data (scalp)")
+            return
+
+        # Cooldown: skip if last trade was < SCALP_COOLDOWN_BARS minutes ago
+        last_trade_ts = state.get("last_scalp_trade_ts")
+        if last_trade_ts:
+            from datetime import datetime as _dt
+            try:
+                lt = _dt.fromisoformat(last_trade_ts) if isinstance(last_trade_ts, str) else last_trade_ts
+                cooldown_sec = SCALP_COOLDOWN_BARS * 60
+                if (now - lt).total_seconds() < cooldown_sec:
+                    logger.debug("Scalp cooldown: %ds remaining", cooldown_sec - (now - lt).total_seconds())
+                    return
+            except Exception:
+                pass
+
+        # Compute Smart Money Score for trade confirmation
+        smart_money = None
+        try:
+            smart_money = compute_smart_money_score()
+            logger.debug("Smart Money Score: %.1f (%s) conf=%.0f%%",
+                         smart_money.score, smart_money.bias, smart_money.confidence * 100)
+        except Exception as e:
+            logger.debug("Smart Money Score unavailable: %s", e)
+
+        setup = detect_scalp(
+            df_1m, flow, swing_highs, swing_lows,
+            tp1_pts=SCALP_TP1_PTS,
+            tp2_pts=SCALP_TP2_PTS,
+            max_risk_pts=SCALP_MAX_RISK_PTS,
+            min_atr=SCALP_MIN_ATR,
+            momentum_threshold=SCALP_MOMENTUM_THRESHOLD,
+            smart_money=smart_money,
+        )
+        if setup is None:
+            src = f"REAL {flow.source}" if flow.is_real else "proxy"
+            sm_info = f" SM={smart_money.score:+.0f}" if smart_money else ""
+            flow_info = f"score={flow.momentum_score:+.0f} VWAP={flow.vwap:.0f} [{src}]{sm_info}"
+            await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"No scalp ({flow_info})")
+            return
+        setup_name_label = f"⚡ SCALP {setup.signal_type}"
+    else:
+        # --- Riley Coleman reversal strategy ---
+        setup = detect_setup(
+            df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
+            level_tolerance_pts=LEVEL_TOLERANCE_PTS,
+            require_trend_only=REQUIRE_TREND_ONLY,
+            retest_only=RETEST_ONLY,
+            min_body_pts=MIN_BODY_PTS,
+        )
+        if setup is None:
+            await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup")
+            return
+        setup_name_label = setup.setup_type.value
 
     risk_pts = abs(setup.entry_price - setup.stop_price)
 
-    if TP1_RR > 0 and risk_pts > 0:
-        if setup.direction == "LONG":
-            setup.target1_price = setup.entry_price + risk_pts * TP1_RR
-        else:
-            setup.target1_price = setup.entry_price - risk_pts * TP1_RR
-    if TP2_RR > 0 and risk_pts > 0:
-        if setup.direction == "LONG":
-            setup.target2_price = setup.entry_price + risk_pts * TP2_RR
-        else:
-            setup.target2_price = setup.entry_price - risk_pts * TP2_RR
+    if not is_scalp:
+        # Riley: apply config-based TP R:R overrides
+        if TP1_RR > 0 and risk_pts > 0:
+            if setup.direction == "LONG":
+                setup.target1_price = setup.entry_price + risk_pts * TP1_RR
+            else:
+                setup.target1_price = setup.entry_price - risk_pts * TP1_RR
+        if TP2_RR > 0 and risk_pts > 0:
+            if setup.direction == "LONG":
+                setup.target2_price = setup.entry_price + risk_pts * TP2_RR
+            else:
+                setup.target2_price = setup.entry_price - risk_pts * TP2_RR
 
-    if MAX_RISK_PTS is not None and risk_pts > MAX_RISK_PTS:
+    effective_max_risk = SCALP_MAX_RISK_PTS if is_scalp else MAX_RISK_PTS
+    if effective_max_risk is not None and risk_pts > effective_max_risk:
         await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup (stop too wide)")
-        return  # Skip wide-stop setups (match backtest; keeps DD low)
+        return
 
-    # Minimum 1 trade/day: after 10:30 EST if 0 trades, use slightly relaxed min R:R (still quality)
-    mins_since_7 = (now.hour - 7) * 60 + now.minute if 7 <= now.hour < 12 else 0
-    use_fallback_rr = (
-        TARGET_MIN_TRADES_PER_DAY >= 1
-        and FALLBACK_AFTER_MINUTES > 0
-        and FALLBACK_MIN_RR is not None
-        and state["trades_today"] == 0
-        and mins_since_7 >= FALLBACK_AFTER_MINUTES
-    )
-    min_rr_use = FALLBACK_MIN_RR if use_fallback_rr else MIN_RR_RATIO
-    if TP1_RR > 0:
-        min_rr_use = TP1_RR
+    if not is_scalp:
+        # Riley-only: fallback RR logic for min 1 trade/day
+        mins_since_7 = (now.hour - 7) * 60 + now.minute if 7 <= now.hour < 12 else 0
+        use_fallback_rr = (
+            TARGET_MIN_TRADES_PER_DAY >= 1
+            and FALLBACK_AFTER_MINUTES > 0
+            and FALLBACK_MIN_RR is not None
+            and state["trades_today"] == 0
+            and mins_since_7 >= FALLBACK_AFTER_MINUTES
+        )
+        min_rr_use = FALLBACK_MIN_RR if use_fallback_rr else MIN_RR_RATIO
+        if TP1_RR > 0:
+            min_rr_use = TP1_RR
+    else:
+        min_rr_use = 0.5  # Scalp has fixed-pt targets; low min RR for entry validation
 
     orderflow_summary = None
     use_orderflow_effective = state.get("use_orderflow", USE_ORDERFLOW)
@@ -310,12 +387,12 @@ async def run_scan(bot=None):
             state["last_orderflow_summary"] = orderflow_summary
 
     result = validate_entry(
-        setup, now, state["trades_today"], MAX_TRADES_PER_DAY,
+        setup, now, state["trades_today"], max_trades,
         min_rr_ratio=min_rr_use,
         orderflow_summary=orderflow_summary,
     )
     if not result.valid:
-        logger.info("Entry rejected: %s", result.reason)
+        logger.info("Entry rejected (%s): %s", active_strat, result.reason)
         await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"Rejected: {result.reason}")
         return
 
@@ -355,8 +432,11 @@ async def run_scan(bot=None):
     rr = (abs(setup.target1_price - setup.entry_price) / risk_pts) if risk_pts else 0
 
     time_est = now.strftime("%I:%M %p EST")
+    tf_note = "1-min | 15-min trend: " + trend.value
+    if is_scalp:
+        tf_note = f"⚡ Scalp | {setup.signal_type} | momentum {setup.momentum_score:+.0f}"
     msg = format_trade_alert(
-        setup_name=setup.setup_type.value,
+        setup_name=setup_name_label,
         time_est=time_est,
         direction=setup.direction,
         entry=setup.entry_price,
@@ -365,7 +445,7 @@ async def run_scan(bot=None):
         tp2=setup.target2_price,
         rr_ratio=rr,
         confidence=setup.confidence,
-        timeframe_note="1-min | 15-min trend: " + trend.value,
+        timeframe_note=tf_note,
         key_level=setup.key_level_name,
         notes=setup.notes,
         contracts=contracts,
@@ -400,6 +480,8 @@ async def run_scan(bot=None):
         "stop": trade.current_stop,
     })
     state["trades_today"] += 1
+    if is_scalp:
+        state["last_scalp_trade_ts"] = now.isoformat()
     log_trade(setup.direction, setup.entry_price, setup.stop_price, setup.target1_price, setup.target2_price, "open", notes=setup.key_level_name)
     save_trade_state()
 
@@ -724,16 +806,67 @@ async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
     gc.collect()
 
 
+@_safe_job
+async def smart_money_insider_job(context: ContextTypes.DEFAULT_TYPE):
+    """Daily 6 AM EST: refresh insider filings + 13F (background thread)."""
+    import concurrent.futures
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        try:
+            from data.insider_tracker import fetch_insider_signal
+            await loop.run_in_executor(pool, fetch_insider_signal)
+            logger.info("Smart Money: insider filings refreshed")
+        except Exception as e:
+            logger.debug("Insider refresh failed: %s", e)
+        try:
+            from data.institutional_tracker import fetch_institutional_signal
+            await loop.run_in_executor(pool, fetch_institutional_signal)
+            logger.info("Smart Money: 13F institutional data refreshed")
+        except Exception as e:
+            logger.debug("13F refresh failed: %s", e)
+
+
+@_safe_job
+async def smart_money_premarket_job(context: ContextTypes.DEFAULT_TYPE):
+    """Daily 8 AM EST: compute pre-market levels (once per session)."""
+    loop = asyncio.get_event_loop()
+    try:
+        from data.premarket_levels import fetch_premarket_levels
+        await loop.run_in_executor(None, fetch_premarket_levels)
+        logger.info("Smart Money: pre-market levels computed")
+    except Exception as e:
+        logger.debug("Pre-market levels failed: %s", e)
+
+
+@_safe_job
+async def smart_money_refresh_job(context: ContextTypes.DEFAULT_TYPE):
+    """Every 5 min during session: refresh options flow + market internals."""
+    if not in_scan_window():
+        return
+    loop = asyncio.get_event_loop()
+    try:
+        from data.options_flow import scan_options_flow
+        await loop.run_in_executor(None, scan_options_flow)
+    except Exception as e:
+        logger.debug("Options flow refresh failed: %s", e)
+    try:
+        from data.market_internals import fetch_market_internals
+        await loop.run_in_executor(None, fetch_market_internals)
+    except Exception as e:
+        logger.debug("Market internals refresh failed: %s", e)
+
+
 async def _post_init(app: Application) -> None:
     """Notify users on startup so they know the bot is online."""
     for cid in TELEGRAM_CHAT_IDS:
         try:
             await app.bot.send_message(
                 chat_id=cid,
-                text=(
+                    text=(
                     "<b>✅ MNQ Bot Online</b>\n"
                     "────────────────────\n"
-                    f"v2.1 │ Scanning {SCAN_SESSION_EST}\n"
+                    f"v2.3 │ Scanning {SCAN_SESSION_EST}\n"
+                    "Smart Money + Order Flow active.\n"
                     "Use buttons below or /help."
                 ),
                 parse_mode="HTML",
@@ -772,7 +905,32 @@ def _build_app() -> Application:
         days=(WEEKLY_REPORT_DAY,),
     )
     logger.info("Weekly report scheduled: day=%s %02d:00 EST", WEEKLY_REPORT_DAY, WEEKLY_REPORT_HOUR)
+
+    # Smart Money data collector schedule
+    app.job_queue.run_daily(smart_money_insider_job, time=time(6, 0, tzinfo=EST))
+    app.job_queue.run_daily(smart_money_premarket_job, time=time(8, 0, tzinfo=EST))
+    app.job_queue.run_repeating(smart_money_refresh_job, interval=300, first=30)
+    logger.info("Smart Money collectors scheduled: insider 6AM, premarket 8AM, options+internals every 5min")
+
     return app
+
+
+def _start_realtime_collectors():
+    """Start Alpaca/Finnhub real-time data collectors if configured."""
+    if not REALTIME_ORDERFLOW_ENABLED:
+        logger.info("Real-time order flow disabled (MNQ_REALTIME_ORDERFLOW=false)")
+        return
+    try:
+        from data.realtime_collector import get_collector_manager
+        mgr = get_collector_manager()
+        desc = mgr.start(
+            alpaca_key=ALPACA_DATA_API_KEY,
+            alpaca_secret=ALPACA_DATA_SECRET_KEY,
+            finnhub_key=FINNHUB_API_KEY,
+        )
+        logger.info("Real-time data: %s", desc)
+    except Exception as e:
+        logger.warning("Could not start real-time collectors: %s", e)
 
 
 def main():
@@ -780,6 +938,9 @@ def main():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (env or config) to run the bot.")
         sys.exit(1)
+
+    # Start real-time order flow collectors (Alpaca/Finnhub WebSocket)
+    _start_realtime_collectors()
 
     max_retries = 0  # unlimited
     retry_delay = 5  # seconds, grows with back-off
@@ -789,7 +950,7 @@ def main():
         attempt += 1
         try:
             logger.info(
-                "MNQ Bot v2.1 starting (attempt %d) – Riley Coleman strategy. Signals only %s.",
+                "MNQ Bot v2.3 starting (attempt %d) – Riley Coleman + Scalp + Smart Money. Signals only %s.",
                 attempt, SCAN_SESSION_EST,
             )
             app = _build_app()
