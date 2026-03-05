@@ -35,7 +35,7 @@ def setup_logging() -> None:
     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logging.getLogger().addHandler(fh)
 
-    # Suppress noisy loggers that flood with every HTTP poll (getUpdates every 10s)
+    # Suppress noisy loggers that flood with every HTTP poll
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("hpack").setLevel(logging.WARNING)

@@ -724,9 +724,32 @@ async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
     gc.collect()
 
 
+async def _post_init(app: Application) -> None:
+    """Notify users on startup so they know the bot is online."""
+    for cid in TELEGRAM_CHAT_IDS:
+        try:
+            await app.bot.send_message(
+                chat_id=cid,
+                text=(
+                    "<b>✅ MNQ Bot Online</b>\n"
+                    "────────────────────\n"
+                    f"v2.1 │ Scanning {SCAN_SESSION_EST}\n"
+                    "Use buttons below or /help."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+
 def _build_app() -> Application:
     """Create the PTB Application with all handlers and jobs."""
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .post_init(_post_init)
+        .build()
+    )
     app.add_error_handler(_error_handler)
     register_commands(app)
 
@@ -771,8 +794,7 @@ def main():
             )
             app = _build_app()
             app.run_polling(
-                allowed_updates=["message", "callback_query"],
-                drop_pending_updates=True,
+                drop_pending_updates=False,
             )
             logger.info("Bot polling stopped cleanly.")
             break  # clean shutdown (e.g. Ctrl+C)
