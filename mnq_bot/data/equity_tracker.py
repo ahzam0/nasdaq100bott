@@ -74,6 +74,11 @@ def get_equity_curve() -> list[dict]:
     return _load_snapshots()
 
 
+def reset_equity_curve() -> None:
+    """Clear all equity snapshots (e.g. when user runs /reset confirm)."""
+    _save_snapshots([])
+
+
 def get_equity_stats() -> dict:
     """
     Return stats: peak_balance, current_balance, max_drawdown_usd, max_drawdown_pct,

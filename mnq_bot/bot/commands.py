@@ -600,7 +600,8 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "  • Trades today → 0\n"
             "  • All trade history → cleared\n"
             "  • Open positions → closed\n"
-            "  • Total scans → 0\n\n"
+            "  • Total scans → 0\n"
+            "  • Equity curve → cleared\n\n"
             "⚠️ <b>This cannot be undone.</b>\n\n"
             "To confirm, type:\n"
             "<code>/reset confirm</code>",
@@ -622,13 +623,20 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _bot_state["last_scalp_trade_ts"] = None
     save_trade_state()
 
+    try:
+        from data.equity_tracker import reset_equity_curve
+        reset_equity_curve()
+    except Exception as e:
+        logger.warning("Equity curve reset failed: %s", e)
+
     await _reply_html(
         update,
         "<b>✅ Stats Reset Complete</b>\n"
         "────────────────────\n"
         f"Cleared <b>{old_trades}</b> trade(s) from history\n"
         f"Closed <b>{old_active}</b> open position(s)\n"
-        f"Previous daily P&L was <code>${old_pnl:+,.0f}</code>\n\n"
+        f"Previous daily P&L was <code>${old_pnl:+,.0f}</code>\n"
+        "Equity curve cleared.\n\n"
         "Everything is fresh. Bot will continue scanning.",
     )
 
