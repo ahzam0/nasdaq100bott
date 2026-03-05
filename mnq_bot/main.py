@@ -85,6 +85,7 @@ from bot import (
     register_commands,
     get_state,
     save_trade_state,
+    maybe_reset_daily,
     format_trade_alert,
     format_trail_alert,
     format_stop_hit,
@@ -173,16 +174,18 @@ async def run_scan(bot=None):
     """Fetch data, detect setup, validate checklist, send alert and optionally execute."""
     if not bot or not TELEGRAM_CHAT_IDS:
         return
+    maybe_reset_daily()
     state = get_state()
     if not state.get("scan_active", True):
+        logger.debug("Scan skipped: paused by user")
         return
     now = now_est()
 
     if not in_scan_window():
-        # Outside session: do nothing (no "Bot running" message to avoid spam)
         return
 
     if state["trades_today"] >= MAX_TRADES_PER_DAY:
+        logger.debug("Scan skipped: trades_today=%d >= max=%d", state["trades_today"], MAX_TRADES_PER_DAY)
         return
 
     # VIX filter: block or reduce risk on high volatility days
@@ -473,6 +476,8 @@ async def _send_scan_status(
         f"15m <code>{trend.value}</code> │ Levels: {level_count} │ "
         f"{reason} │ Trades: {trades_today}/{MAX_TRADES_PER_DAY}"
     )
+    logger.info("Scan status: NQ=%s trend=%s levels=%d %s trades=%d/%d",
+                price_str, trend.value, level_count, reason, trades_today, MAX_TRADES_PER_DAY)
     await send_telegram_all(msg, bot)
 
 
@@ -705,13 +710,15 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
     """Periodic health check: log status, run GC, detect stalls."""
     global _consecutive_job_errors
+    maybe_reset_daily()
     now = datetime.now(EST)
     state = get_state()
     active = len(state.get("active_trades", []))
     scans = state.get("total_scans", 0)
     logger.info(
-        "Heartbeat %s | scans=%d active_trades=%d daily_pnl=$%.0f last_scan=%s",
+        "Heartbeat %s | scans=%d active_trades=%d daily_pnl=$%.0f trades_today=%d last_scan=%s",
         now.strftime("%H:%M EST"), scans, active, state.get("daily_pnl", 0),
+        state.get("trades_today", 0),
         _last_heartbeat.strftime("%H:%M") if _last_heartbeat else "never",
     )
     gc.collect()

@@ -103,6 +103,8 @@ def _load_trade_data():
             out["daily_pnl"] = float(data["daily_pnl"])
         if isinstance(data.get("trades_today"), int):
             out["trades_today"] = max(0, data["trades_today"])
+        if isinstance(data.get("last_trade_date"), str):
+            out["last_trade_date"] = data["last_trade_date"]
         if isinstance(data.get("active_trades"), list):
             restored = []
             for i, item in enumerate(data["active_trades"]):
@@ -153,6 +155,7 @@ def save_trade_state():
             "active_trades": serialized_active,
             "daily_pnl": _bot_state.get("daily_pnl", 0.0),
             "trades_today": _bot_state.get("trades_today", 0),
+            "last_trade_date": _bot_state.get("last_trade_date", ""),
         }
         with open(TRADE_DATA_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -166,14 +169,15 @@ _bot_state = {
     "trail_mode": "alert",
     "risk_per_trade": MAX_RISK_PER_TRADE_USD,
     "contracts": DEFAULT_CONTRACTS,
-    "use_orderflow": False,  # default OFF; toggle with /orderflow on|off
+    "use_orderflow": False,
     "session_premarket": True,
     "session_rth": True,
     "trades_today": 0,
     "daily_pnl": 0.0,
     "active_trades": [],
     "trade_history": [],
-    "total_scans": 0,  # number of full scans run (incremented in main.run_scan)
+    "total_scans": 0,
+    "last_trade_date": "",
 }
 # Load persisted risk/contracts
 for k, v in _load_persisted_state().items():
@@ -181,6 +185,21 @@ for k, v in _load_persisted_state().items():
 # Load persisted trade data (history + active trades + daily_pnl + trades_today)
 for k, v in _load_trade_data().items():
     _bot_state[k] = v
+
+
+def maybe_reset_daily():
+    """Reset trades_today and daily_pnl if a new trading day (EST) has started."""
+    from bot.scheduler import now_est
+    today_str = now_est().strftime("%Y-%m-%d")
+    last = _bot_state.get("last_trade_date", "")
+    if last != today_str:
+        logger.info("New trading day %s (prev=%s) — resetting trades_today=%d, daily_pnl=$%.0f",
+                     today_str, last or "none", _bot_state.get("trades_today", 0), _bot_state.get("daily_pnl", 0))
+        _bot_state["trades_today"] = 0
+        _bot_state["daily_pnl"] = 0.0
+        _bot_state["last_trade_date"] = today_str
+        _bot_state["total_scans"] = 0
+        save_trade_state()
 
 BOT_VERSION = "2.1.0"
 
@@ -213,6 +232,8 @@ async def _reply_html(update: Update, text: str, reply_markup=None) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    logger.info("/start from user %s (%s)", user.id if user else "?", user.first_name if user else "?")
     _bot_state["scan_active"] = True
     await _reply_html(
         update,
@@ -225,6 +246,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("/stop from user %s", update.effective_user.id if update.effective_user else "?")
     _bot_state["scan_active"] = False
     await _reply_html(
         update,
@@ -234,12 +256,25 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("/status from user %s", update.effective_user.id if update.effective_user else "?")
     active = _bot_state["active_trades"]
     scan = "Scanning" if _bot_state["scan_active"] else "Paused"
+    total_scans = _bot_state.get("total_scans", 0)
+
+    loop = asyncio.get_event_loop()
+    price_line, feed_type = await loop.run_in_executor(None, _fetch_live_price_sync)
+
     lines = [
-        "<b>📊 Status</b>",
+        f"<b>📊 {INSTRUMENT} Bot Status</b>",
         "────────────────────",
-        f"Scan <b>{scan}</b>",
+        f"Mode  <b>LIVE</b>",
+        f"Feed  <b>{_esc(feed_type)}</b>",
+    ]
+    if price_line:
+        lines.append(f"Price <code>{price_line}</code>")
+    lines += [
+        "",
+        f"Scan <b>{scan}</b>  │  Scans <code>{total_scans}</code>",
         f"Trades today <code>{_bot_state['trades_today']}</code> / {MAX_TRADES_PER_DAY}",
         f"Daily P&L <code>${_bot_state['daily_pnl']:+,.0f}</code>",
         f"Active trades <b>{len(active)}</b>",
@@ -249,6 +284,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         e = t.get("entry", 0)
         s = t.get("stop", 0)
         lines.append(f"  • {d} @ <code>{e:,.2f}</code>  Stop <code>{s:,.2f}</code>")
+    lines.append(f"\n<i>Session 7:00–11:00 AM EST</i>")
     await _reply_html(update, "\n".join(lines))
 
 
@@ -556,6 +592,7 @@ async def cmd_trailmode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("/help from user %s", update.effective_user.id if update.effective_user else "?")
     await _reply_html(
         update,
         "<b>🤖 MNQ Riley Coleman Bot</b>\n"
@@ -962,38 +999,41 @@ async def cmd_dashboard_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route button text to the right command."""
     text = (update.message and update.message.text or "").strip()
-    if text == "▶ Start":
-        await cmd_start(update, context)
-    elif text == "⏸ Pause":
-        await cmd_stop(update, context)
-    elif text == "📊 Status":
-        await cmd_status(update, context)
-    elif text == "🔍 Scan status":
-        await cmd_scan_status(update, context)
-    elif text == "📌 Levels":
-        await cmd_levels(update, context)
-    elif text == "📈 P&L":
-        await cmd_pnl(update, context)
-    elif text == "📋 History":
-        await cmd_history(update, context)
-    elif text == "📊 Order flow":
-        await cmd_orderflow_toggle(update, context)
-    elif text == "💰 Live Price":
-        await cmd_live_price(update, context)
-    elif text == "🔌 APIs":
-        await cmd_apis(update, context)
-    elif text == "📉 Chart":
-        await cmd_chart(update, context)
-    elif text == "📈 Equity":
-        await cmd_equity(update, context)
-    elif text == "🌡 VIX":
-        await cmd_vix(update, context)
-    elif text == "🤖 ML":
-        await cmd_ml(update, context)
-    elif text == "🌐 Dashboard":
-        await cmd_dashboard_info(update, context)
-    elif text == "❓ Help":
-        await cmd_help(update, context)
+    user = update.effective_user
+    user_id = user.id if user else "?"
+    logger.info("Button press from %s: '%s'", user_id, text)
+
+    handler_map = {
+        "▶ Start": cmd_start,
+        "⏸ Pause": cmd_stop,
+        "📊 Status": cmd_status,
+        "🔍 Scan status": cmd_scan_status,
+        "📌 Levels": cmd_levels,
+        "📈 P&L": cmd_pnl,
+        "📋 History": cmd_history,
+        "📊 Order flow": cmd_orderflow_toggle,
+        "💰 Live Price": cmd_live_price,
+        "🔌 APIs": cmd_apis,
+        "📉 Chart": cmd_chart,
+        "📈 Equity": cmd_equity,
+        "🌡 VIX": cmd_vix,
+        "🤖 ML": cmd_ml,
+        "🌐 Dashboard": cmd_dashboard_info,
+        "❓ Help": cmd_help,
+    }
+
+    handler = handler_map.get(text)
+    if handler:
+        try:
+            await handler(update, context)
+        except Exception as e:
+            logger.error("Button handler error for '%s': %s", text, e, exc_info=True)
+            try:
+                await _reply_html(update, f"Error: {_esc(str(e)[:200])}")
+            except Exception:
+                pass
+    else:
+        logger.debug("Unrecognized button text: '%s'", text)
 
 
 async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

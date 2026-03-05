@@ -225,6 +225,8 @@ class YahooFinanceFeed(MarketDataFeed):
         return None
 
     def is_connected(self) -> bool:
+        if not self._connected:
+            self._ensure_symbol()
         return self._connected
 
 

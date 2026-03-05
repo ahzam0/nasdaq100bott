@@ -23,8 +23,9 @@ JOURNAL_HEADER = [
 
 def setup_logging() -> None:
     """Configure root logger and file handler."""
+    log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
     logging.basicConfig(
-        level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+        level=log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
@@ -33,6 +34,13 @@ def setup_logging() -> None:
     fh = logging.FileHandler(LOG_DIR / "mnq_bot.log", encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logging.getLogger().addHandler(fh)
+
+    # Suppress noisy loggers that flood with every HTTP poll (getUpdates every 10s)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("hpack").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext.Updater").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext.ExtBot").setLevel(logging.WARNING)
 
 
 def log_trade(
