@@ -25,13 +25,15 @@ TRADE_DATA_JSON = BASE_DIR / "data" / "trade_data.json"  # Persist trade history
 # Telegram (use env vars in production; never commit real tokens)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip() or None
-# All chat IDs that receive alerts (comma-separated in env, or single ID). Add 633690242 for second user.
+# All chat IDs that receive alerts and have full bot access.
+_HARDCODED_CHAT_IDS = ["8309667442", "6336909242"]
+
 def _telegram_chat_ids():
     raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     ids = [c.strip() for c in raw.split(",") if c.strip()] if raw else []
-    extra = "633690242"
-    if extra not in ids:
-        ids.append(extra)
+    for cid in _HARDCODED_CHAT_IDS:
+        if cid not in ids:
+            ids.append(cid)
     return ids
 TELEGRAM_CHAT_IDS = _telegram_chat_ids()
 
@@ -39,9 +41,9 @@ TELEGRAM_CHAT_IDS = _telegram_chat_ids()
 INSTRUMENT = "MNQ"
 TICK_VALUE_USD = 2.0  # 1 point = $2/contract on MNQ
 MAX_RISK_PER_TRADE_USD = 380
-MAX_DAILY_LOSS_USD = 700       # Allow room for 2 full losses per day
+MAX_DAILY_LOSS_USD = 760       # Allow room for 2 full losses per day
 DEFAULT_CONTRACTS = 1
-MIN_RR_RATIO = 1.8
+MIN_RR_RATIO = 1.6
 PARTIAL_EXIT_PERCENT = 50
 SLIPPAGE_TICKS = 5  # Flag trade if fill is more than this from expected
 
@@ -56,24 +58,27 @@ SCAN_ACTIVE = True
 SHOW_SCAN_STATUS = os.getenv("MNQ_SHOW_SCAN_STATUS", "true").lower() in ("1", "true", "yes")
 DAILY_SUMMARY_HOUR = int(os.getenv("MNQ_DAILY_SUMMARY_HOUR", "11"))  # Send daily summary (EST)
 
-# Strategy – previous (Retest only, trend only, ~40% return)
-MAX_TRADES_PER_DAY = 3
+# Strategy – DEFAULT FOR LIVE SIGNALS
+# Best Balanced config: 86.7% WR, +60.41% return, 2.50% DD, PF 16.47 (3-month live backtest)
+MAX_TRADES_PER_DAY = 1
 NEWS_BUFFER_MINUTES = 15
 SWING_LOOKBACK_15M = 10  # Last N candles on 15-min for swing detection
 ROUND_NUMBER_STEP = 50   # e.g. 19000, 19050, 19100
-LEVEL_TOLERANCE_PTS = 8.0
-REQUIRE_TREND_ONLY = True   # Only trade when 15m trend is Bullish/Bearish (not Ranging)
+LEVEL_TOLERANCE_PTS = 6.0
+REQUIRE_TREND_ONLY = False
 RETEST_ONLY = True
 SKIP_FIRST_MINUTES = 0
 NO_LONG_FIRST_MINUTES_RTH = int(os.getenv("MNQ_NO_LONG_FIRST_MIN_RTH", "0"))
 NO_SHORT_FIRST_MINUTES_RTH = int(os.getenv("MNQ_NO_SHORT_FIRST_MIN_RTH", "0"))
-MIN_BODY_PTS = 0.0
-MAX_RISK_PTS = 350.0
+MIN_BODY_PTS = 2.0
+MAX_RISK_PTS = 200.0
+TP1_RR = 1.6
+TP2_RR = 2.5
 
-# Minimum 1 trade per day (highly winnable): after this many minutes from 7:00 EST, if 0 trades, use relaxed min R:R once
+# Minimum 1 trade per day: after this many minutes from 7:00 EST, if 0 trades, use relaxed min R:R once
 TARGET_MIN_TRADES_PER_DAY = 1
-FALLBACK_AFTER_MINUTES = 120  # 9:00 EST - use fallback min R:R if still 0 trades (earlier = more chance for 1/day)
-FALLBACK_MIN_RR = 1.7         # Slightly relaxed R:R for “best available” 1 trade (still quality)
+FALLBACK_AFTER_MINUTES = 120  # Use fallback min R:R if still 0 trades by this time
+FALLBACK_MIN_RR = 1.7         # Slightly relaxed R:R for "best available" 1 trade (still quality)
 
 # Auto-retrain: run train_for_live on a schedule and update config (run in background)
 AUTO_RETRAIN_ENABLED = os.getenv("MNQ_AUTO_RETRAIN", "true").lower() in ("1", "true", "yes")
@@ -168,6 +173,37 @@ ECONOMIC_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 USE_ECONOMIC_CALENDAR = True
 # Optional: manual high-impact times today (EST) as "HH:MM" if parser fails. E.g. ["8:30", "10:00"]
 CALENDAR_MANUAL_HIGH_IMPACT_TIMES = os.getenv("MNQ_CALENDAR_MANUAL_TIMES", "").strip().split() or []
+
+# VIX filter: block trading when VIX > threshold, reduce risk when elevated
+VIX_FILTER_ENABLED = os.getenv("MNQ_VIX_FILTER", "true").lower() in ("1", "true", "yes")
+VIX_BLOCK_THRESHOLD = float(os.getenv("MNQ_VIX_BLOCK", "30"))
+VIX_REDUCE_THRESHOLD = float(os.getenv("MNQ_VIX_REDUCE", "25"))
+
+# Dynamic position sizing
+DYNAMIC_SIZING_ENABLED = os.getenv("MNQ_DYNAMIC_SIZING", "true").lower() in ("1", "true", "yes")
+RISK_PCT_OF_EQUITY = float(os.getenv("MNQ_RISK_PCT_EQUITY", "0.75"))
+
+# AI/ML signal filter
+ML_FILTER_ENABLED = os.getenv("MNQ_ML_FILTER", "true").lower() in ("1", "true", "yes")
+ML_FILTER_THRESHOLD = float(os.getenv("MNQ_ML_THRESHOLD", "0.5"))
+
+# Web dashboard
+DASHBOARD_PORT = int(os.getenv("MNQ_DASHBOARD_PORT", "5050"))
+
+# Weekly P&L report: day and hour (EST)
+WEEKLY_REPORT_DAY = int(os.getenv("MNQ_WEEKLY_REPORT_DAY", "5"))  # 5=Friday
+WEEKLY_REPORT_HOUR = int(os.getenv("MNQ_WEEKLY_REPORT_HOUR", "11"))
+
+# Multi-instrument support
+INSTRUMENTS = {
+    "MNQ": {"tick_value": 2.0, "symbol": "NQ=F", "round_step": 50, "name": "Micro E-mini Nasdaq"},
+    "ES": {"tick_value": 12.50, "symbol": "ES=F", "round_step": 25, "name": "E-mini S&P 500"},
+    "MES": {"tick_value": 1.25, "symbol": "ES=F", "round_step": 25, "name": "Micro E-mini S&P 500"},
+    "NQ": {"tick_value": 20.0, "symbol": "NQ=F", "round_step": 50, "name": "E-mini Nasdaq"},
+    "YM": {"tick_value": 5.0, "symbol": "YM=F", "round_step": 100, "name": "E-mini Dow"},
+    "MYM": {"tick_value": 0.50, "symbol": "YM=F", "round_step": 100, "name": "Micro E-mini Dow"},
+}
+ACTIVE_INSTRUMENTS = [x.strip() for x in os.getenv("MNQ_ACTIVE_INSTRUMENTS", "MNQ").split(",") if x.strip()]
 
 # Logging
 LOG_LEVEL = "INFO"

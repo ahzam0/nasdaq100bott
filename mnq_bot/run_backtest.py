@@ -117,6 +117,18 @@ def main():
     parser.add_argument("--level-tol", type=float, default=None, metavar="PTS", help="Level tolerance in points (default: config).")
     parser.add_argument("--max-dd-pct", type=float, default=None, metavar="PCT", help="Cap drawdown: stop new entries when DD from peak >= this % (e.g. 10). Reduces max DD.")
     parser.add_argument("--max-risk-pts", type=float, default=None, metavar="PTS", help="Skip trades with stop wider than this (points). Limits loss per trade and reduces DD.")
+    parser.add_argument("--fallback-after", type=int, default=None, metavar="MIN", help="After N min from session start, if 0 trades use fallback min R:R (default: config).")
+    parser.add_argument("--fallback-min-rr", type=float, default=None, metavar="R", help="Fallback min R:R when --fallback-after reached (default: config). Use 0 to disable fallback.")
+    parser.add_argument("--require-trend-only", action="store_true", dest="require_trend_only", default=None, help="Require 15m trend alignment (default: config).")
+    parser.add_argument("--no-require-trend-only", action="store_false", dest="require_trend_only", help="Do not require trend.")
+    parser.add_argument("--retest-only", action="store_true", dest="retest_only", default=None, help="Only retest reversals, no failed breakout (default: config).")
+    parser.add_argument("--no-retest-only", action="store_false", dest="retest_only", help="Allow failed breakout setups.")
+    parser.add_argument("--min-rev-strength", type=float, default=0.0, metavar="R", help="Min reversal candle range as ratio of avg 20-bar range (e.g. 1.2 = 120%% of avg). Filters weak reversals.")
+    parser.add_argument("--close-beyond-level", action="store_true", default=False, help="Require close price to confirm beyond key level (LONG close > level, SHORT close < level).")
+    parser.add_argument("--max-concurrent", type=int, default=0, metavar="N", help="Max concurrent open positions (0=unlimited). Prevents stacking trades.")
+    parser.add_argument("--cooldown", type=int, default=0, metavar="BARS", help="Min bars between entries (0=no cooldown). Prevents re-entering same setup.")
+    parser.add_argument("--tp1-rr", type=float, default=0.0, metavar="R", help="Override TP1 as multiple of risk (e.g. 1.0=1R, 1.5=1.5R). 0=use default 2R.")
+    parser.add_argument("--tp2-rr", type=float, default=0.0, metavar="R", help="Override TP2 as multiple of risk (e.g. 2.0=2R, 3.0=3R). 0=use default 3.5R.")
     parser.add_argument("--realtime", action="store_true", help="Use real-time data from live feed (same as bot: Yahoo/Price API/Tradovate). Fetches latest 1m/15m and runs backtest.")
     parser.add_argument("--loop", type=int, default=0, metavar="SEC", help="With --realtime: re-run backtest every SEC seconds (e.g. 60). 0 = run once.")
     parser.add_argument("--use-orderflow-proxy", action="store_true", help="Use candle-based order flow proxy in backtest (require bar direction to confirm LONG/SHORT; aligns with live when USE_ORDERFLOW).")
@@ -178,14 +190,14 @@ def main():
             max_trades_per_day=args.max_trades if args.max_trades is not None else MAX_TRADES_PER_DAY,
             min_rr=args.min_rr if args.min_rr is not None else MIN_RR_RATIO,
             level_tolerance_pts=args.level_tol if args.level_tol is not None else LEVEL_TOLERANCE_PTS,
-            require_trend_only=REQUIRE_TREND_ONLY,
+            require_trend_only=args.require_trend_only if args.require_trend_only is not None else REQUIRE_TREND_ONLY,
             skip_first_minutes=args.skip_first if args.skip_first is not None else SKIP_FIRST_MINUTES,
-            retest_only=RETEST_ONLY,
+            retest_only=args.retest_only if args.retest_only is not None else RETEST_ONLY,
             min_body_pts=args.min_body if args.min_body is not None else MIN_BODY_PTS,
             max_drawdown_cap_pct=args.max_dd_pct,
             max_risk_pts=args.max_risk_pts if args.max_risk_pts is not None else MAX_RISK_PTS,
-            fallback_after_minutes=FALLBACK_AFTER_MINUTES if TARGET_MIN_TRADES_PER_DAY >= 1 else 0,
-            fallback_min_rr=FALLBACK_MIN_RR if TARGET_MIN_TRADES_PER_DAY >= 1 else None,
+            fallback_after_minutes=args.fallback_after if args.fallback_after is not None else (FALLBACK_AFTER_MINUTES if TARGET_MIN_TRADES_PER_DAY >= 1 else 0),
+            fallback_min_rr=None if args.fallback_min_rr is not None and args.fallback_min_rr <= 0 else (args.fallback_min_rr if args.fallback_min_rr is not None else (FALLBACK_MIN_RR if TARGET_MIN_TRADES_PER_DAY >= 1 else None)),
         )
         try:
             while True:
@@ -254,19 +266,25 @@ def main():
         max_trades_per_day=args.max_trades if args.max_trades is not None else MAX_TRADES_PER_DAY,
         min_rr=args.min_rr if args.min_rr is not None else MIN_RR_RATIO,
         level_tolerance_pts=args.level_tol if args.level_tol is not None else LEVEL_TOLERANCE_PTS,
-        require_trend_only=REQUIRE_TREND_ONLY,
+        require_trend_only=args.require_trend_only if args.require_trend_only is not None else REQUIRE_TREND_ONLY,
         skip_first_minutes=args.skip_first if args.skip_first is not None else SKIP_FIRST_MINUTES,
-        retest_only=RETEST_ONLY,
+        retest_only=args.retest_only if args.retest_only is not None else RETEST_ONLY,
         min_body_pts=args.min_body if args.min_body is not None else MIN_BODY_PTS,
         max_drawdown_cap_pct=args.max_dd_pct,
         max_risk_pts=args.max_risk_pts if args.max_risk_pts is not None else MAX_RISK_PTS,
-        fallback_after_minutes=FALLBACK_AFTER_MINUTES if TARGET_MIN_TRADES_PER_DAY >= 1 else 0,
-        fallback_min_rr=FALLBACK_MIN_RR if TARGET_MIN_TRADES_PER_DAY >= 1 else None,
+        fallback_after_minutes=args.fallback_after if args.fallback_after is not None else (FALLBACK_AFTER_MINUTES if TARGET_MIN_TRADES_PER_DAY >= 1 else 0),
+        fallback_min_rr=None if args.fallback_min_rr is not None and args.fallback_min_rr <= 0 else (args.fallback_min_rr if args.fallback_min_rr is not None else (FALLBACK_MIN_RR if TARGET_MIN_TRADES_PER_DAY >= 1 else None)),
         use_orderflow_proxy=args.use_orderflow_proxy,
         session_24_7=args.session_24_7,
         session_ist=args.session_ist,
         session_start_min=session_start_min if use_custom_session else None,
         session_end_min=session_end_min if use_custom_session else None,
+        min_reversal_strength=args.min_rev_strength,
+        require_close_beyond_level=args.close_beyond_level,
+        max_concurrent_trades=args.max_concurrent,
+        entry_cooldown_bars=args.cooldown,
+        tp1_rr=args.tp1_rr,
+        tp2_rr=args.tp2_rr,
     )
     dd_cap_msg = f", DD cap={args.max_dd_pct}%" if args.max_dd_pct is not None else ""
     of_msg = " (order flow proxy ON)" if args.use_orderflow_proxy else ""

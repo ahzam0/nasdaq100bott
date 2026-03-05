@@ -37,6 +37,8 @@ def format_trade_alert(
     timeframe_note: str,
     key_level: str,
     notes: str,
+    contracts: int = 1,
+    risk_usd: float = 0.0,
 ) -> str:
     """Format the main trade alert with clear sections."""
     pts_sl = abs(entry - stop)
@@ -45,17 +47,24 @@ def format_trade_alert(
     usd_sl = pts_sl * TICK_VALUE_USD
     usd_tp1 = pts_tp1 * TICK_VALUE_USD
     usd_tp2 = pts_tp2 * TICK_VALUE_USD
+    total_risk = risk_usd if risk_usd > 0 else usd_sl * contracts
+    total_tp1 = usd_tp1 * contracts
+    total_tp2 = usd_tp2 * contracts
     dir_emoji = "🟢" if direction == "LONG" else "🔴"
     return (
-        f"<b>🔔 MNQ TRADE ALERT</b>\n"
+        f"<b>🔔 {INSTRUMENT} TRADE ALERT</b>\n"
         f"<i>Riley Coleman • {_esc(setup_name)}</i>\n"
         "────────────────────\n"
         f"<b>{dir_emoji} {direction}</b>  │  ⏰ {_esc(time_est)}\n\n"
+        f"<b>📦 Position</b>\n"
+        f"Contracts <code>{contracts}</code> micro  │  Risk <code>${total_risk:,.0f}</code>\n\n"
         "<b>📍 Levels</b>\n"
         f"Entry   <code>{_n(entry)}</code>\n"
         f"Stop    <code>{_n(stop)}</code>  (-{pts_sl:.0f} pts │ -${usd_sl:.0f}/ct)\n"
         f"TP1 50% <code>{_n(tp1)}</code>  (+{pts_tp1:.0f} pts │ +${usd_tp1:.0f}/ct)\n"
         f"TP2 50% <code>{_n(tp2)}</code>  (+{pts_tp2:.0f} pts │ +${usd_tp2:.0f}/ct)\n\n"
+        f"<b>💰 P&L at target ({contracts} ct)</b>\n"
+        f"TP1 <code>+${total_tp1:,.0f}</code>  │  TP2 <code>+${total_tp2:,.0f}</code>\n\n"
         f"<b>📐 R:R</b> <code>{rr_ratio:.1f}:1</code>  │  <b>Confidence</b> {_esc(confidence)}\n"
         f"<b>📊</b> {_esc(timeframe_note)}\n"
         f"<b>🗝 Level</b> {_esc(key_level)}\n"
@@ -180,3 +189,51 @@ async def send_telegram_all(text: str, bot, parse_mode: str = "HTML") -> bool:
         if await send_telegram(text, bot, chat_id, parse_mode):
             ok = True
     return ok
+
+
+async def send_photo_all(photo_bytes: bytes, bot, caption: str = "", parse_mode: str = "HTML") -> bool:
+    """Send photo to all configured chat IDs. Returns True if at least one succeeded."""
+    if not TELEGRAM_CHAT_IDS:
+        return False
+    import io
+    ok = False
+    for chat_id in TELEGRAM_CHAT_IDS:
+        try:
+            await bot.send_photo(chat_id=chat_id, photo=io.BytesIO(photo_bytes), caption=caption, parse_mode=parse_mode)
+            ok = True
+        except Exception as e:
+            logger.warning("Photo send to %s failed: %s", chat_id, e)
+    return ok
+
+
+def format_weekly_report(
+    date_range: str,
+    total_trades: int,
+    winners: int,
+    losers: int,
+    pnl: float,
+    win_rate: float,
+    best_trade: float,
+    worst_trade: float,
+    max_drawdown: float,
+    vix_avg: float | None = None,
+    ml_score_avg: float | None = None,
+) -> str:
+    pnl_emoji = "📈" if pnl >= 0 else "📉"
+    body = (
+        f"<b>📅 WEEKLY P&L REPORT</b>\n"
+        f"<i>{_esc(date_range)}</i>\n"
+        "────────────────────\n"
+        f"Trades <b>{total_trades}</b>  |  Win <b>{winners}</b>  |  Loss <b>{losers}</b>\n"
+        f"Win rate <b>{win_rate:.0f}%</b>\n"
+        f"{pnl_emoji} <b>P&L <code>${pnl:+,.0f}</code></b>\n\n"
+        f"Best trade  <code>${best_trade:+,.0f}</code>\n"
+        f"Worst trade <code>${worst_trade:+,.0f}</code>\n"
+        f"Max drawdown <code>${max_drawdown:,.0f}</code>\n"
+    )
+    if vix_avg is not None:
+        body += f"\nVIX avg <code>{vix_avg:.1f}</code>\n"
+    if ml_score_avg is not None:
+        body += f"ML score avg <code>{ml_score_avg:.2f}</code>\n"
+    body += "\n<i>Good trading week ahead!</i>"
+    return body

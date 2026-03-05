@@ -28,7 +28,7 @@ class TestConfig(unittest.TestCase):
         self.assertIsNotNone(config.INSTRUMENT)
         self.assertEqual(config.INSTRUMENT, "MNQ")
         self.assertGreater(config.MAX_RISK_PER_TRADE_USD, 0)
-        self.assertIn(config.MAX_TRADES_PER_DAY, (1, 2, 3))
+        self.assertIn(config.MAX_TRADES_PER_DAY, (1, 2, 3, 4, 5))
         self.assertTrue(hasattr(config, "RETEST_ONLY"))
 
 

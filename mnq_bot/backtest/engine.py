@@ -119,8 +119,21 @@ class BacktestEngine:
         session_ist: bool = False,
         session_start_min: int | None = None,
         session_end_min: int | None = None,
+        min_reversal_strength: float = 0.0,
+        require_close_beyond_level: bool = False,
+        max_concurrent_trades: int = 0,
+        entry_cooldown_bars: int = 0,
+        tp1_rr: float = 0.0,
+        tp2_rr: float = 0.0,
     ):
         self.initial_balance = initial_balance
+        self.min_reversal_strength = min_reversal_strength
+        self.require_close_beyond_level = require_close_beyond_level
+        self.max_concurrent_trades = max_concurrent_trades
+        self.entry_cooldown_bars = entry_cooldown_bars
+        self.tp1_rr = tp1_rr
+        self.tp2_rr = tp2_rr
+        self._bars_since_last_entry = 999
         self.session_24_7 = session_24_7
         self.session_ist = session_ist
         self.session_start_min = session_start_min
@@ -169,6 +182,8 @@ class BacktestEngine:
         effective_min_rr: float | None = None,
     ) -> bool:
         min_rr_use = effective_min_rr if effective_min_rr is not None else self.min_rr
+        if self.tp1_rr > 0:
+            min_rr_use = self.tp1_rr
         orderflow_summary = None
         if self.use_orderflow_proxy and not df_1m.empty:
             last = df_1m.iloc[-1]
@@ -195,8 +210,12 @@ class BacktestEngine:
         contracts = contracts_from_risk(self.risk_per_trade_usd, risk_pts, self.tick_value)
         if contracts < 1:
             return False
-        reward_pts = abs(setup.target1_price - setup.entry_price)
-        if reward_pts / risk_pts < min_rr_use:
+        if self.tp2_rr > 0:
+            reward_pts = abs(setup.target2_price - setup.entry_price)
+        else:
+            reward_pts = abs(setup.target1_price - setup.entry_price)
+        effective_rr_check = self.tp1_rr if self.tp1_rr > 0 else min_rr_use
+        if reward_pts / risk_pts < effective_rr_check:
             return False
         active = ActiveTrade(
             direction=setup.direction,
@@ -217,6 +236,7 @@ class BacktestEngine:
             contracts=contracts,
         )
         self.open_trades.append((active, bt))
+        self._bars_since_last_entry = 0
         return True
 
     def _update_open_trades(self, bar: pd.Series, bar_ts: pd.Timestamp, high: float, low: float, close: float):
@@ -335,6 +355,7 @@ class BacktestEngine:
             high = float(bar["high"])
             low = float(bar["low"])
             close = float(bar["close"])
+            self._bars_since_last_entry += 1
 
             # Update open trades (stop, TP, trail)
             self._update_open_trades(bar, bar_ts, high, low, close)
@@ -378,6 +399,39 @@ class BacktestEngine:
                     retest_only=self.retest_only,
                     min_body_pts=self.min_body_pts,
                 )
+            if setup is not None and self.max_concurrent_trades > 0 and len(self.open_trades) >= self.max_concurrent_trades:
+                setup = None
+            if setup is not None and self.entry_cooldown_bars > 0 and self._bars_since_last_entry < self.entry_cooldown_bars:
+                setup = None
+            if setup is not None and self.max_concurrent_trades > 0 and self.open_trades:
+                for at, _ in self.open_trades:
+                    if abs(at.entry - close) < 2.0:
+                        setup = None
+                        break
+            if setup is not None and self.min_reversal_strength > 0:
+                avg_range = lookback_1m["high"].iloc[-20:].values - lookback_1m["low"].iloc[-20:].values
+                avg_range = avg_range[avg_range > 0].mean() if len(avg_range) > 0 else 1.0
+                bar_range = high - low
+                if avg_range > 0 and bar_range / avg_range < self.min_reversal_strength:
+                    setup = None
+            if setup is not None and self.require_close_beyond_level:
+                if setup.direction == "LONG" and close < setup.entry_price:
+                    setup = None
+                elif setup.direction == "SHORT" and close > setup.entry_price:
+                    setup = None
+            if setup is not None and (self.tp1_rr > 0 or self.tp2_rr > 0):
+                risk = abs(setup.entry_price - setup.stop_price)
+                if risk > 0:
+                    if self.tp1_rr > 0:
+                        if setup.direction == "LONG":
+                            setup.target1_price = setup.entry_price + risk * self.tp1_rr
+                        else:
+                            setup.target1_price = setup.entry_price - risk * self.tp1_rr
+                    if self.tp2_rr > 0:
+                        if setup.direction == "LONG":
+                            setup.target2_price = setup.entry_price + risk * self.tp2_rr
+                        else:
+                            setup.target2_price = setup.entry_price - risk * self.tp2_rr
             if setup is not None:
                 trades_today = _trades_today_before(self.trades, now_est)
                 mins_since_7 = (now_est.hour - 7) * 60 + now_est.minute if 7 <= now_est.hour < 12 else 0

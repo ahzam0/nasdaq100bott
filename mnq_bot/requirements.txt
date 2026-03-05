@@ -8,6 +8,7 @@ python-telegram-bot>=20.0,<21.0
 pandas>=2.0.0
 numpy>=1.24.0
 yfinance>=0.2.0
+matplotlib>=3.7.0
 
 # Scheduling
 APScheduler>=3.10.0
@@ -33,6 +34,9 @@ websocket-client>=1.6.0
 
 # Timezone
 pytz>=2023.3
+
+# Charts (equity curve, /chart command)
+matplotlib>=3.7.0
 
 # Env loading (optional)
 python-dotenv>=1.0.0

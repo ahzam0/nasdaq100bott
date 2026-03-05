@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from .alerts import format_trade_alert, format_trail_alert, send_telegram, send_telegram_all
+from .alerts import format_trade_alert, format_trail_alert, send_telegram, send_telegram_all, send_photo_all, format_weekly_report
 from .scheduler import now_est
 from config import (
     DEFAULT_CONTRACTS,
@@ -182,7 +182,7 @@ for k, v in _load_persisted_state().items():
 for k, v in _load_trade_data().items():
     _bot_state[k] = v
 
-BOT_VERSION = "1.1.0"
+BOT_VERSION = "2.1.0"
 
 
 def get_state():
@@ -197,7 +197,8 @@ def get_main_keyboard():
             [KeyboardButton("📊 Status"), KeyboardButton("🔍 Scan status")],
             [KeyboardButton("📌 Levels"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
             [KeyboardButton("📋 History"), KeyboardButton("📊 Order flow"), KeyboardButton("🔌 APIs")],
-            [KeyboardButton("❓ Help")],
+            [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity"), KeyboardButton("🌡 VIX")],
+            [KeyboardButton("🤖 ML"), KeyboardButton("🌐 Dashboard"), KeyboardButton("❓ Help")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
@@ -587,7 +588,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/trailmode auto|alert</code> – Trail behavior\n\n"
         "<code>/nextretrain</code> – Next auto-retrain time\n"
         "<code>/version</code> – Bot version\n"
-        "<code>/backtest [days]</code> – Run short backtest (default 2 days)"
+        "<code>/backtest [days]</code> – Run short backtest (default 2 days)\n\n"
+        "<b>Advanced</b>\n"
+        "<code>/chart</code> – Live chart with key levels\n"
+        "<code>/equity</code> – Equity curve chart + stats\n"
+        "<code>/vix</code> – VIX filter status\n"
+        "<code>/ml</code> – AI/ML signal filter weights\n"
+        "<code>/instruments</code> – Multi-instrument config\n"
+        "<code>/dashboard</code> – Web dashboard info"
     )
 
 
@@ -803,6 +811,154 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await _reply_html(update, "<b>📊 Backtest</b>\n<pre>" + _esc(report) + "</pre>")
 
 
+async def cmd_chart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a chart image with price action and key levels."""
+    await _reply_html(update, "<b>Generating chart...</b>")
+    loop = asyncio.get_event_loop()
+    chart_bytes, error = await loop.run_in_executor(None, _generate_chart_sync)
+    if error:
+        await _reply_html(update, f"<b>Chart error:</b> {_esc(error)}")
+        return
+    ok = await send_photo_all(chart_bytes, context.bot, caption="<b>MNQ - Live Chart with Key Levels</b>")
+    if not ok:
+        await _reply_html(update, "Failed to send chart.")
+
+
+def _generate_chart_sync() -> tuple[bytes | None, str | None]:
+    try:
+        from data import get_feed
+        from main import get_levels_on_demand
+        from utils.chart_generator import generate_price_chart
+        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
+        df_1m = feed.get_1m_candles(100)
+        if df_1m is None or df_1m.empty:
+            return None, "No candle data. Try during 7:00-11:00 AM EST."
+        key_levels = None
+        try:
+            from strategy import build_key_levels
+            from .scheduler import now_est
+            df_15m = feed.get_15m_candles(50)
+            if df_15m is not None and not df_15m.empty:
+                key_levels = build_key_levels(df_15m, df_1m, now_est())
+        except Exception:
+            pass
+        active = _bot_state.get("active_trades", [])
+        png = generate_price_chart(df_1m, key_levels=key_levels, active_trades=active)
+        return png, None
+    except Exception as e:
+        return None, str(e)
+
+
+async def cmd_equity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send equity curve chart and stats."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _equity_sync)
+    if result.get("error"):
+        await _reply_html(update, f"<b>Equity:</b> {_esc(result['error'])}")
+        return
+    stats = result.get("stats", {})
+    msg = (
+        "<b>📈 Equity Curve</b>\n"
+        "────────────────────\n"
+        f"Current  <code>${stats.get('current_balance', 0):,.0f}</code>\n"
+        f"Peak     <code>${stats.get('peak_balance', 0):,.0f}</code>\n"
+        f"Return   <code>{stats.get('total_return_pct', 0):+.2f}%</code>\n"
+        f"Max DD   <code>${stats.get('max_drawdown_usd', 0):,.0f}</code> ({stats.get('max_drawdown_pct', 0):.2f}%)\n"
+        f"Sharpe   <code>{stats.get('sharpe_estimate', 0):.2f}</code>"
+    )
+    chart_bytes = result.get("chart")
+    if chart_bytes:
+        await send_photo_all(chart_bytes, context.bot, caption=msg)
+    else:
+        await _reply_html(update, msg)
+
+
+def _equity_sync() -> dict:
+    try:
+        from data.equity_tracker import get_equity_stats, generate_equity_chart
+        stats = get_equity_stats()
+        chart = generate_equity_chart()
+        return {"stats": stats, "chart": chart}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def cmd_vix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current VIX and filter status."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _vix_sync)
+    vix = result.get("vix")
+    action = result.get("action", "normal")
+    if vix is None:
+        await _reply_html(update, "<b>VIX Filter</b>\n────────────────────\nCould not fetch VIX (market may be closed).")
+        return
+    emoji = {"block": "🔴", "reduce": "🟡", "normal": "🟢"}.get(action, "⚪")
+    msg = (
+        "<b>VIX Filter</b>\n"
+        "────────────────────\n"
+        f"VIX <b><code>{vix:.1f}</code></b> {emoji}\n"
+        f"Action: <b>{action.upper()}</b>\n"
+    )
+    if action == "block":
+        msg += "\n<i>Trading blocked: VIX too high (>30)</i>"
+    elif action == "reduce":
+        msg += "\n<i>Risk reduced by 50%: VIX elevated (>25)</i>"
+    else:
+        msg += "\n<i>Normal conditions</i>"
+    await _reply_html(update, msg)
+
+
+def _vix_sync() -> dict:
+    try:
+        from data.vix_filter import vix_check
+        return vix_check()
+    except Exception as e:
+        return {"action": "normal", "vix": None, "reason": str(e)}
+
+
+async def cmd_ml(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show ML filter status and weights."""
+    try:
+        from strategy.ml_filter import _load_weights, DEFAULT_WEIGHTS
+        weights = _load_weights()
+        lines = ["<b>AI/ML Signal Filter</b>", "────────────────────", ""]
+        for k, v in weights.items():
+            default = DEFAULT_WEIGHTS.get(k, 0)
+            diff = v - default
+            arrow = "+" if diff > 0 else ""
+            lines.append(f"<code>{k:<25}</code> <b>{v:.3f}</b>  ({arrow}{diff:.3f})")
+        lines.append("")
+        lines.append("<i>Weights auto-adjust from trade outcomes.</i>")
+        await _reply_html(update, "\n".join(lines))
+    except Exception as e:
+        await _reply_html(update, f"<b>ML Filter:</b> {_esc(str(e))}")
+
+
+async def cmd_instruments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show configured instruments."""
+    from config import INSTRUMENTS, ACTIVE_INSTRUMENTS
+    lines = ["<b>Multi-Instrument Config</b>", "────────────────────", ""]
+    for sym, info in INSTRUMENTS.items():
+        active = "✅" if sym in ACTIVE_INSTRUMENTS else "  "
+        lines.append(f"{active} <b>{sym}</b> - {info['name']} (${info['tick_value']}/pt, {info['symbol']})")
+    lines.append(f"\n<i>Active: {', '.join(ACTIVE_INSTRUMENTS)}</i>")
+    lines.append("<i>Set MNQ_ACTIVE_INSTRUMENTS=MNQ,ES to add more.</i>")
+    await _reply_html(update, "\n".join(lines))
+
+
+async def cmd_dashboard_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show web dashboard URL."""
+    from config import DASHBOARD_PORT
+    await _reply_html(
+        update,
+        "<b>Web Dashboard</b>\n"
+        "────────────────────\n"
+        f"Run: <code>python -m dashboard.app</code>\n"
+        f"URL: <code>http://localhost:{DASHBOARD_PORT}</code>\n\n"
+        "<i>Dark theme with live charts, P&L, trades.</i>"
+    )
+
+
 async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route button text to the right command."""
     text = (update.message and update.message.text or "").strip()
@@ -826,6 +982,16 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
         await cmd_live_price(update, context)
     elif text == "🔌 APIs":
         await cmd_apis(update, context)
+    elif text == "📉 Chart":
+        await cmd_chart(update, context)
+    elif text == "📈 Equity":
+        await cmd_equity(update, context)
+    elif text == "🌡 VIX":
+        await cmd_vix(update, context)
+    elif text == "🤖 ML":
+        await cmd_ml(update, context)
+    elif text == "🌐 Dashboard":
+        await cmd_dashboard_info(update, context)
     elif text == "❓ Help":
         await cmd_help(update, context)
 
@@ -951,6 +1117,12 @@ def register_commands(application):
     application.add_handler(CommandHandler("trailmode", cmd_trailmode))
     application.add_handler(CommandHandler("demo", cmd_demo))
     application.add_handler(CommandHandler("demo_signal", cmd_demo_signal))
+    application.add_handler(CommandHandler("chart", cmd_chart))
+    application.add_handler(CommandHandler("equity", cmd_equity))
+    application.add_handler(CommandHandler("vix", cmd_vix))
+    application.add_handler(CommandHandler("ml", cmd_ml))
+    application.add_handler(CommandHandler("instruments", cmd_instruments))
+    application.add_handler(CommandHandler("dashboard", cmd_dashboard_info))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("pause", cmd_stop))
     application.add_handler(CallbackQueryHandler(callback_feed_toggle, pattern="^yahoo_ws_"))
