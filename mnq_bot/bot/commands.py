@@ -625,8 +625,13 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     equity_ok = False
     try:
+        from config import DATA_DIR
+        equity_path = DATA_DIR / "equity_curve.json"
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        equity_path.write_text("[]", encoding="utf-8")
+        equity_ok = True
         from data.equity_tracker import reset_equity_curve
-        equity_ok = reset_equity_curve()
+        reset_equity_curve()
     except Exception as e:
         logger.warning("Equity curve reset failed: %s", e)
 

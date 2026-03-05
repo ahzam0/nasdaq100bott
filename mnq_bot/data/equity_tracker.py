@@ -78,10 +78,9 @@ def get_equity_curve() -> list[dict]:
 
 
 def reset_equity_curve() -> bool:
-    """Clear all equity snapshots (e.g. when user runs /reset confirm). Returns True if ok."""
+    """Clear all equity snapshots (e.g. when user runs /reset confirm). Returns True if ok.
+    Overwrites file in place (no unlink) so other processes (e.g. dashboard) see new content."""
     try:
-        if EQUITY_CURVE_PATH.exists():
-            EQUITY_CURVE_PATH.unlink()
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         EQUITY_CURVE_PATH.write_text("[]", encoding="utf-8")
         return True
