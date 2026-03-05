@@ -298,7 +298,13 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "<b>📂 Open Positions</b>\n"
             "────────────────────\n"
             "No open positions right now.\n\n"
-            "<i>Positions appear here when the bot enters a trade.</i>"
+            "<b>Auto:</b> Positions appear here automatically\n"
+            "when the bot detects a trade setup.\n\n"
+            "<b>Manual:</b> Track your own trade:\n"
+            "<code>/addpos LONG 25000 24900 25200</code>\n"
+            "<code>/addpos SHORT 25100 25200 24900</code>\n"
+            "Format: direction entry stop target [contracts]\n\n"
+            "<i>Close with</i> <code>/closepos</code>"
         )
         return
 
@@ -322,10 +328,11 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         lines.append(f"NQ Price <code>{price_str}</code>  <i>({_esc(feed_type)})</i>")
         lines.append("")
 
-    for item in active:
+    for idx, item in enumerate(active):
         trade = item.get("trade")
         if trade is None:
             continue
+        pos_id = item.get("id", idx + 1)
         direction = trade.direction
         entry = trade.entry
         stop = trade.current_stop
@@ -340,7 +347,7 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             rr_sign = "+" if rr >= 0 else ""
             pnl_emoji = "🟩" if pnl >= 0 else "🟥"
             lines.append(
-                f"{arrow} <b>{direction}</b>  ×{contracts}\n"
+                f"{arrow} <b>#{pos_id} {direction}</b>  ×{contracts}\n"
                 f"  Entry <code>{entry:,.2f}</code>  Stop <code>{stop:,.2f}</code>\n"
                 f"  TP1 <code>{trade.target1:,.2f}</code>  TP2 <code>{trade.target2:,.2f}</code>\n"
                 f"  {pnl_emoji} P&L <b><code>{pnl_sign}${pnl:,.2f}</code></b>  "
@@ -348,7 +355,7 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         else:
             lines.append(
-                f"{arrow} <b>{direction}</b>  ×{contracts}\n"
+                f"{arrow} <b>#{pos_id} {direction}</b>  ×{contracts}\n"
                 f"  Entry <code>{entry:,.2f}</code>  Stop <code>{stop:,.2f}</code>\n"
                 f"  TP1 <code>{trade.target1:,.2f}</code>  TP2 <code>{trade.target2:,.2f}</code>\n"
                 f"  <i>Price unavailable</i>"
@@ -370,8 +377,189 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"Day <code>{combined_sign}${combined:,.0f}</code>"
         )
 
-    lines.append(f"\n<i>Updated {now_est().strftime('%I:%M:%S %p EST')}</i>")
+    lines.append(f"\n<code>/closepos</code> to close  │  <code>/addpos</code> to add")
+    lines.append(f"<i>Updated {now_est().strftime('%I:%M:%S %p EST')}</i>")
     await _reply_html(update, "\n".join(lines))
+
+
+async def cmd_addpos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manually add a position to track.
+    Usage: /addpos LONG 25000 24900 25200 [contracts]
+           /addpos SHORT 25100 25200 24900 [contracts]
+    """
+    logger.info("/addpos from user %s: %s", update.effective_user.id if update.effective_user else "?", context.args)
+    usage = (
+        "<b>Usage:</b>\n"
+        "<code>/addpos LONG entry stop target [contracts]</code>\n"
+        "<code>/addpos SHORT entry stop target [contracts]</code>\n\n"
+        "<b>Example:</b>\n"
+        "<code>/addpos LONG 25000 24900 25200 2</code>\n"
+        "<code>/addpos SHORT 25100 25200 24900 1</code>"
+    )
+    args = context.args or []
+    if len(args) < 4:
+        await _reply_html(update, f"<b>📂 Add Position</b>\n────────────────────\n{usage}")
+        return
+
+    direction = args[0].upper()
+    if direction not in ("LONG", "SHORT"):
+        await _reply_html(update, f"❌ Direction must be <b>LONG</b> or <b>SHORT</b>.\n\n{usage}")
+        return
+
+    try:
+        entry = float(args[1])
+        stop = float(args[2])
+        target = float(args[3])
+        contracts = int(args[4]) if len(args) > 4 else 1
+    except ValueError:
+        await _reply_html(update, f"❌ Invalid numbers.\n\n{usage}")
+        return
+
+    if contracts < 1:
+        contracts = 1
+
+    if direction == "LONG" and stop >= entry:
+        await _reply_html(update, "❌ For LONG, stop must be <b>below</b> entry.")
+        return
+    if direction == "SHORT" and stop <= entry:
+        await _reply_html(update, "❌ For SHORT, stop must be <b>above</b> entry.")
+        return
+
+    from strategy.trade_manager import ActiveTrade
+    from config import TICK_VALUE_USD
+    risk_pts = abs(entry - stop)
+    trade = ActiveTrade(
+        direction=direction,
+        entry=entry,
+        stop=stop,
+        target1=target,
+        target2=target + (target - entry) if direction == "LONG" else target - (entry - target),
+        contracts=contracts,
+        risk_per_contract_usd=risk_pts * TICK_VALUE_USD,
+    )
+
+    state = get_state()
+    pos_id = len(state["active_trades"]) + 1
+    state["active_trades"].append({
+        "trade": trade,
+        "id": pos_id,
+        "direction": trade.direction,
+        "entry": trade.entry,
+        "stop": trade.current_stop,
+    })
+    save_trade_state()
+
+    arrow = "🟢" if direction == "LONG" else "🔴"
+    await _reply_html(
+        update,
+        f"<b>✅ Position #{pos_id} Added</b>\n"
+        f"────────────────────\n"
+        f"{arrow} <b>{direction}</b> ×{contracts}\n"
+        f"Entry <code>{entry:,.2f}</code>\n"
+        f"Stop  <code>{stop:,.2f}</code>\n"
+        f"TP1   <code>{target:,.2f}</code>\n"
+        f"Risk  <code>{risk_pts:.2f} pts</code> (${risk_pts * TICK_VALUE_USD * contracts:,.0f})\n\n"
+        f"Tap <b>📂 Positions</b> to see live P&L."
+    )
+
+
+async def cmd_closepos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Close/remove a tracked position.
+    Usage: /closepos [id]  — close specific position, or /closepos all
+    """
+    logger.info("/closepos from user %s: %s", update.effective_user.id if update.effective_user else "?", context.args)
+    state = get_state()
+    active = state["active_trades"]
+
+    if not active:
+        await _reply_html(update, "📂 No open positions to close.")
+        return
+
+    args = context.args or []
+
+    if args and args[0].lower() == "all":
+        count = len(active)
+        loop = asyncio.get_event_loop()
+        price_str, _ = await loop.run_in_executor(None, _fetch_live_price_sync)
+        total_pnl = 0.0
+        if price_str:
+            try:
+                current_price = float(price_str.replace(",", ""))
+                for item in active:
+                    trade = item.get("trade")
+                    if trade:
+                        total_pnl += trade.pnl_at_price(current_price)
+            except ValueError:
+                pass
+        state["daily_pnl"] += total_pnl
+        for item in active:
+            trade = item.get("trade")
+            if trade:
+                state["trade_history"].append({
+                    "dir": trade.direction, "entry": trade.entry,
+                    "result": "closed", "pnl": trade.pnl_at_price(current_price) if price_str else 0,
+                    "date": now_est().strftime("%Y-%m-%d"),
+                })
+        state["active_trades"] = []
+        save_trade_state()
+        await _reply_html(
+            update,
+            f"✅ Closed <b>{count}</b> position(s).\n"
+            f"Realized P&L: <code>${total_pnl:+,.2f}</code>"
+        )
+        return
+
+    if args:
+        try:
+            target_id = int(args[0])
+        except ValueError:
+            await _reply_html(update, "❌ Usage: <code>/closepos [id]</code> or <code>/closepos all</code>")
+            return
+    else:
+        target_id = active[-1].get("id", 1) if active else None
+
+    removed = None
+    remaining = []
+    for item in active:
+        if item.get("id") == target_id and removed is None:
+            removed = item
+        else:
+            remaining.append(item)
+
+    if removed is None:
+        ids = ", ".join(str(i.get("id", "?")) for i in active)
+        await _reply_html(update, f"❌ Position #{target_id} not found.\nOpen IDs: {ids}")
+        return
+
+    trade = removed.get("trade")
+    pnl = 0.0
+    if trade:
+        loop = asyncio.get_event_loop()
+        price_str, _ = await loop.run_in_executor(None, _fetch_live_price_sync)
+        if price_str:
+            try:
+                current_price = float(price_str.replace(",", ""))
+                pnl = trade.pnl_at_price(current_price)
+            except ValueError:
+                pass
+        state["daily_pnl"] += pnl
+        state["trade_history"].append({
+            "dir": trade.direction, "entry": trade.entry,
+            "result": "closed", "pnl": pnl,
+            "date": now_est().strftime("%Y-%m-%d"),
+        })
+
+    state["active_trades"] = remaining
+    save_trade_state()
+    arrow = "🟢" if removed.get("direction") == "LONG" else "🔴"
+    await _reply_html(
+        update,
+        f"✅ <b>Position #{target_id} Closed</b>\n"
+        f"────────────────────\n"
+        f"{arrow} {removed.get('direction', '?')} @ <code>{removed.get('entry', 0):,.2f}</code>\n"
+        f"Realized P&L: <code>${pnl:+,.2f}</code>\n"
+        f"Remaining: <b>{len(remaining)}</b> position(s)"
+    )
 
 
 async def cmd_scan_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -690,6 +878,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Info</b>\n"
         "<code>/status</code> – Scan state, trades, P&L\n"
         "<code>/positions</code> – Live open P&L per position\n"
+        "<code>/addpos</code> – Manually track a position\n"
+        "<code>/closepos</code> – Close a tracked position\n"
         "<code>/levels</code> – Today's key levels\n"
         "<code>/price</code> – Live MNQ price\n"
         "<code>/pnl</code> – Daily/weekly P&L\n"
@@ -1225,6 +1415,8 @@ def register_commands(application):
     application.add_handler(CommandHandler("stop", cmd_stop))
     application.add_handler(CommandHandler("status", cmd_status))
     application.add_handler(CommandHandler("positions", cmd_positions))
+    application.add_handler(CommandHandler("addpos", cmd_addpos))
+    application.add_handler(CommandHandler("closepos", cmd_closepos))
     application.add_handler(CommandHandler("scanstatus", cmd_scan_status))
     application.add_handler(CommandHandler("levels", cmd_levels))
     application.add_handler(CommandHandler("price", cmd_live_price))
