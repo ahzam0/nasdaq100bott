@@ -623,11 +623,14 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _bot_state["last_scalp_trade_ts"] = None
     save_trade_state()
 
+    equity_ok = False
     try:
         from data.equity_tracker import reset_equity_curve
-        reset_equity_curve()
+        equity_ok = reset_equity_curve()
     except Exception as e:
         logger.warning("Equity curve reset failed: %s", e)
+
+    equity_line = "Equity curve cleared." if equity_ok else "⚠️ Equity curve reset failed (file may be in use)."
 
     await _reply_html(
         update,
@@ -636,7 +639,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Cleared <b>{old_trades}</b> trade(s) from history\n"
         f"Closed <b>{old_active}</b> open position(s)\n"
         f"Previous daily P&L was <code>${old_pnl:+,.0f}</code>\n"
-        "Equity curve cleared.\n\n"
+        f"{equity_line}\n\n"
         "Everything is fresh. Bot will continue scanning.",
     )
 

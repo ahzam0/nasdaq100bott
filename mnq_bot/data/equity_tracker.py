@@ -11,8 +11,11 @@ matplotlib.use("Agg")  # Non-interactive backend for PNG export
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Paths
-_DATA_DIR = Path(__file__).resolve().parent
+# Use same data dir as trade_data.json so path is identical across bot/dashboard
+try:
+    from config import DATA_DIR as _DATA_DIR
+except ImportError:
+    _DATA_DIR = Path(__file__).resolve().parent
 EQUITY_CURVE_PATH = _DATA_DIR / "equity_curve.json"
 
 # Default initial balance (from config or strategy reference)
@@ -74,9 +77,16 @@ def get_equity_curve() -> list[dict]:
     return _load_snapshots()
 
 
-def reset_equity_curve() -> None:
-    """Clear all equity snapshots (e.g. when user runs /reset confirm)."""
-    _save_snapshots([])
+def reset_equity_curve() -> bool:
+    """Clear all equity snapshots (e.g. when user runs /reset confirm). Returns True if ok."""
+    try:
+        if EQUITY_CURVE_PATH.exists():
+            EQUITY_CURVE_PATH.unlink()
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        EQUITY_CURVE_PATH.write_text("[]", encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def get_equity_stats() -> dict:
