@@ -112,7 +112,7 @@ def _load_trade_data():
             out["trades_today"] = max(0, data["trades_today"])
         if isinstance(data.get("last_trade_date"), str):
             out["last_trade_date"] = data["last_trade_date"]
-        if isinstance(data.get("active_strategy"), str) and data["active_strategy"] in ("riley", "scalp"):
+        if isinstance(data.get("active_strategy"), str) and data["active_strategy"] in ("riley", "scalp", "both"):
             out["active_strategy"] = data["active_strategy"]
         if isinstance(data.get("active_trades"), list):
             restored = []
@@ -277,8 +277,15 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     price_line, feed_type = await loop.run_in_executor(None, _fetch_live_price_sync)
 
     strat = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
-    strat_label = "⚡ Scalp" if strat == "scalp" else "📐 Riley Coleman"
-    effective_max = SCALP_MAX_TRADES_PER_DAY if strat == "scalp" else MAX_TRADES_PER_DAY
+    if strat == "both":
+        strat_label = "📐+⚡ Both"
+        effective_max = MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY
+    elif strat == "scalp":
+        strat_label = "⚡ Scalp"
+        effective_max = SCALP_MAX_TRADES_PER_DAY
+    else:
+        strat_label = "📐 Riley Coleman"
+        effective_max = MAX_TRADES_PER_DAY
     lines = [
         f"<b>📊 {INSTRUMENT} Bot Status</b>",
         "────────────────────",
@@ -968,7 +975,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/version</code> – Bot version\n"
         "<code>/backtest [days]</code> – Run short backtest (default 2 days)\n\n"
         "<b>Advanced</b>\n"
-        "<code>/strategy</code> – Switch between Riley Coleman / Scalp\n"
+        "<code>/strategy</code> – Switch Riley / Scalp / Both\n"
         "<code>/smartmoney</code> – Smart Money Score (6 sources)\n"
         "<code>/chart</code> – Live chart with key levels\n"
         "<code>/equity</code> – Equity curve chart + stats\n"
@@ -1424,9 +1431,15 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Show current strategy and inline buttons to switch."""
     logger.info("/strategy from user %s", update.effective_user.id if update.effective_user else "?")
     current = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
-    if current == "scalp":
+    if current == "both":
+        label = "📐+⚡ Both (Riley + Scalp)"
+        desc = (
+            "Runs BOTH strategies each scan cycle.\n"
+            "Riley Coleman checks first, then Scalp if no Riley setup.\n"
+            f"Max trades/day: {MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY} combined"
+        )
+    elif current == "scalp":
         label = "⚡ Quick Scalp (Volume Flow + Smart Money)"
-        # Check real-time data source
         rt_source = "Candle proxy (no API keys)"
         try:
             from data.realtime_collector import get_collector_manager
@@ -1435,7 +1448,6 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 rt_source = mgr.source
         except Exception:
             pass
-        # Get Smart Money Score summary
         sm_line = ""
         try:
             from strategy.smart_money import compute_smart_money_score
@@ -1458,8 +1470,9 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📐 Riley Coleman", callback_data="strategy_riley"),
-            InlineKeyboardButton("⚡ Quick Scalp", callback_data="strategy_scalp"),
+            InlineKeyboardButton("📐 Riley", callback_data="strategy_riley"),
+            InlineKeyboardButton("⚡ Scalp", callback_data="strategy_scalp"),
+            InlineKeyboardButton("📐+⚡ Both", callback_data="strategy_both"),
         ]
     ])
 
@@ -1486,6 +1499,9 @@ async def callback_strategy_switch(update: Update, context: ContextTypes.DEFAULT
     elif data == "strategy_scalp":
         new_strat = "scalp"
         label = "⚡ Quick Scalp (Volume Flow)"
+    elif data == "strategy_both":
+        new_strat = "both"
+        label = "📐+⚡ Both (Riley + Scalp)"
     else:
         return
 
