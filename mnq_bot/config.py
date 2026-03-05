@@ -218,16 +218,16 @@ INSTRUMENTS = {
 ACTIVE_INSTRUMENTS = [x.strip() for x in os.getenv("MNQ_ACTIVE_INSTRUMENTS", "MNQ").split(",") if x.strip()]
 
 # Active strategy: "riley" (Riley Coleman reversal) or "scalp" (quick volume-flow scalp)
-ACTIVE_STRATEGY = os.getenv("MNQ_ACTIVE_STRATEGY", "riley").strip().lower()
+ACTIVE_STRATEGY = os.getenv("MNQ_ACTIVE_STRATEGY", "scalp").strip().lower()
 
-# Scalp strategy parameters
-SCALP_MAX_TRADES_PER_DAY = int(os.getenv("MNQ_SCALP_MAX_TRADES", "8"))
-SCALP_MAX_RISK_PTS = float(os.getenv("MNQ_SCALP_MAX_RISK", "60"))
-SCALP_TP1_PTS = float(os.getenv("MNQ_SCALP_TP1", "40"))
+# Scalp strategy parameters (optimized: 71.4% WR, 2.43 PF, +5.65% on 7d backtest)
+SCALP_MAX_TRADES_PER_DAY = int(os.getenv("MNQ_SCALP_MAX_TRADES", "4"))
+SCALP_MAX_RISK_PTS = float(os.getenv("MNQ_SCALP_MAX_RISK", "40"))
+SCALP_TP1_PTS = float(os.getenv("MNQ_SCALP_TP1", "30"))
 SCALP_TP2_PTS = float(os.getenv("MNQ_SCALP_TP2", "80"))
-SCALP_COOLDOWN_BARS = int(os.getenv("MNQ_SCALP_COOLDOWN", "3"))
+SCALP_COOLDOWN_BARS = int(os.getenv("MNQ_SCALP_COOLDOWN", "2"))
 SCALP_MIN_ATR = float(os.getenv("MNQ_SCALP_MIN_ATR", "15.0"))
-SCALP_MOMENTUM_THRESHOLD = float(os.getenv("MNQ_SCALP_MOMENTUM", "40"))
+SCALP_MOMENTUM_THRESHOLD = float(os.getenv("MNQ_SCALP_MOMENTUM", "25"))
 
 # Smart Money System
 SMART_MONEY_ENABLED = os.getenv("MNQ_SMART_MONEY", "true").lower() in ("1", "true", "yes")

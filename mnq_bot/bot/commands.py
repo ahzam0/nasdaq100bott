@@ -578,6 +578,54 @@ async def cmd_closepos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reset all stats to fresh: P&L, trades, history, positions."""
+    logger.info("/reset from user %s", update.effective_user.id if update.effective_user else "?")
+    args = context.args or []
+
+    if not args or args[0].lower() != "confirm":
+        await _reply_html(
+            update,
+            "<b>🔄 Reset Stats</b>\n"
+            "────────────────────\n"
+            "This will reset:\n"
+            "  • Daily P&L → $0\n"
+            "  • Trades today → 0\n"
+            "  • All trade history → cleared\n"
+            "  • Open positions → closed\n"
+            "  • Total scans → 0\n\n"
+            "⚠️ <b>This cannot be undone.</b>\n\n"
+            "To confirm, type:\n"
+            "<code>/reset confirm</code>",
+        )
+        return
+
+    old_pnl = _bot_state.get("daily_pnl", 0)
+    old_trades = len(_bot_state.get("trade_history", []))
+    old_active = len(_bot_state.get("active_trades", []))
+
+    _bot_state["trades_today"] = 0
+    _bot_state["daily_pnl"] = 0.0
+    _bot_state["active_trades"] = []
+    _bot_state["trade_history"] = []
+    _bot_state["total_scans"] = 0
+    _bot_state["last_trade_date"] = now_est().strftime("%Y-%m-%d")
+    _bot_state["consecutive_scan_failures"] = 0
+    _bot_state["scan_failure_alert_sent"] = False
+    _bot_state["last_scalp_trade_ts"] = None
+    save_trade_state()
+
+    await _reply_html(
+        update,
+        "<b>✅ Stats Reset Complete</b>\n"
+        "────────────────────\n"
+        f"Cleared <b>{old_trades}</b> trade(s) from history\n"
+        f"Closed <b>{old_active}</b> open position(s)\n"
+        f"Previous daily P&L was <code>${old_pnl:+,.0f}</code>\n\n"
+        "Everything is fresh. Bot will continue scanning.",
+    )
+
+
 async def cmd_scan_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show whether scanning is on/off and total number of scans run."""
     on = _bot_state.get("scan_active", True)
@@ -927,7 +975,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/vix</code> – VIX filter status\n"
         "<code>/ml</code> – AI/ML signal filter weights\n"
         "<code>/instruments</code> – Multi-instrument config\n"
-        "<code>/dashboard</code> – Web dashboard info"
+        "<code>/dashboard</code> – Web dashboard info\n"
+        "<code>/reset confirm</code> – Reset all stats fresh"
     )
 
 
@@ -1636,6 +1685,7 @@ def register_commands(application):
     application.add_handler(CommandHandler("dashboard", cmd_dashboard_info))
     application.add_handler(CommandHandler("strategy", cmd_strategy))
     application.add_handler(CommandHandler("smartmoney", cmd_smartmoney))
+    application.add_handler(CommandHandler("reset", cmd_reset))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("pause", cmd_stop))
     application.add_handler(CallbackQueryHandler(callback_strategy_switch, pattern="^strategy_"))
