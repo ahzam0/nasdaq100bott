@@ -16,11 +16,19 @@ if str(ROOT) not in sys.path:
 
 def main():
     from config import ORDERFLOW_API_URL, USE_ORDERFLOW, ORDERFLOW_STALE_SEC
-    from main import _fetch_orderflow_summary
 
-    print("=== Order flow check (same as bot) ===")
+    print("=== Order flow check ===")
     print(f"ORDERFLOW_API_URL:  {ORDERFLOW_API_URL or '(not set)'}")
     print(f"USE_ORDERFLOW:      {USE_ORDERFLOW}")
+
+    # Bot no longer fetches order flow in run_scan; script still can check API if present
+    try:
+        from main import _fetch_orderflow_summary
+    except (ImportError, AttributeError):
+        print()
+        print("Order flow fetch not available in bot (removed from strategy).")
+        print("ORDERFLOW_API_URL is still used by config; bot does not call it.")
+        return 0
 
     if not ORDERFLOW_API_URL or not ORDERFLOW_API_URL.strip():
         print()

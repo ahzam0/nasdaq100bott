@@ -61,6 +61,7 @@ from config import (
     RETRAIN_HOUR_EST,
     RETRAIN_MINUTE_EST,
     RTH_END,
+    DAILY_SUMMARY_HOUR,
     SCAN_SESSION_EST,
     SKIP_MONDAY,
     SKIP_CPI_DAYS,
@@ -841,7 +842,7 @@ def _build_app() -> Application:
     register_commands(app)
 
     app.job_queue.run_repeating(scan_job, interval=60, first=10)
-    app.job_queue.run_daily(daily_summary_job, time=time(11, 0, tzinfo=EST))
+    app.job_queue.run_daily(daily_summary_job, time=time(DAILY_SUMMARY_HOUR, 0, tzinfo=EST))
     # Auto-disconnect live feed (WebSocket) when session ends — rest until next session
     _session_end_time = _parse_session_end_time()
     app.job_queue.run_daily(session_end_feed_job, time=_session_end_time)

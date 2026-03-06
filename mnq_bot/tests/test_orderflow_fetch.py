@@ -34,9 +34,13 @@ class TestOrderflowFetch(unittest.TestCase):
         self.assertIsInstance(summary.get("age_seconds"), (int, float))
 
     def test_main_fetch_returns_same_shape(self):
-        """main._fetch_orderflow_summary returns dict with age_seconds and imbalance_ratio."""
+        """If main still has _fetch_orderflow_summary, it returns dict with age_seconds and imbalance_ratio.
+        Bot no longer uses order flow; this test skips when the function was removed."""
         import main as main_mod
-        summary = main_mod._fetch_orderflow_summary(timeout_sec=2)
+        fetch = getattr(main_mod, "_fetch_orderflow_summary", None)
+        if fetch is None:
+            self.skipTest("Order flow fetch removed from main (bot no longer uses order flow)")
+        summary = fetch(timeout_sec=2)
         if summary is None:
             self.skipTest("Order flow server not reachable at ORDERFLOW_API_URL")
         self.assertIn("age_seconds", summary)
