@@ -403,6 +403,31 @@ async def _run_single_strategy(
     log_trade(setup.direction, setup.entry_price, setup.stop_price, setup.target1_price, setup.target2_price, "open", notes=setup.key_level_name)
 
 
+def _run_scan_fetch_sync():
+    """
+    Run in thread pool: feed + candles + levels. Keeps event loop free so Telegram
+    buttons and dashboard stay responsive. Returns (df_1m, df_15m, current_price,
+    key_levels, swing_highs, swing_lows, trend, now) or None on failure.
+    """
+    try:
+        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
+        if not feed.is_connected():
+            return None
+        df_1m = feed.get_1m_candles(100)
+        df_15m = feed.get_15m_candles(50)
+        if df_1m is None or df_15m is None or df_1m.empty or df_15m.empty:
+            return None
+        now = now_est()
+        key_levels = build_key_levels(df_15m, df_1m, now)
+        swing_highs, swing_lows = swing_highs_lows(df_15m)
+        trend = trend_from_structure(df_15m, swing_highs, swing_lows)
+        current_price = feed.get_current_price()
+        return (df_1m, df_15m, current_price, key_levels, swing_highs, swing_lows, trend, now)
+    except Exception as e:
+        logger.warning("Scan fetch (sync) failed: %s", e)
+        return None
+
+
 # Throttle "outside session" status to once per 15 min so Telegram isn't spammed
 async def run_scan(bot=None):
     """Fetch data, detect setup, validate checklist, send alert and optionally execute."""
@@ -458,50 +483,24 @@ async def run_scan(bot=None):
         )
         return
 
-    try:
-        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
-    except Exception as e:
-        logger.warning("Feed init error: %s", e)
-        await _record_scan_failure(state, bot, f"Feed init: {e}")
-        return
-    if not feed.is_connected():
+    # Run blocking I/O in thread pool so Telegram buttons and dashboard stay responsive
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _run_scan_fetch_sync)
+    if result is None:
         if SHOW_SCAN_STATUS:
             await send_telegram_all(
-                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Feed not connected. Check /apis.",
+                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Feed/candle error or no data. Check /apis.",
                 bot,
             )
-        await _record_scan_failure(state, bot, "Feed not connected")
+        await _record_scan_failure(state, bot, "Feed/candle error or no data")
         return
-    try:
-        df_1m = feed.get_1m_candles(100)
-        df_15m = feed.get_15m_candles(50)
-    except Exception as e:
-        logger.warning("Feed error: %s", e)
-        if SHOW_SCAN_STATUS:
-            await send_telegram_all(
-                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ Error: {html.escape(str(e))}",
-                bot,
-            )
-        await _record_scan_failure(state, bot, str(e))
-        return
-    if df_1m.empty or df_15m.empty:
-        if SHOW_SCAN_STATUS:
-            await send_telegram_all(
-                f"🔍 <b>Scan</b> {now.strftime('%I:%M %p EST')} │ No candle data (try during 7:00–11:00 AM EST).",
-                bot,
-            )
-        await _record_scan_failure(state, bot, "No candle data")
-        return
+
+    df_1m, df_15m, current_price, key_levels, swing_highs, swing_lows, trend, now = result
 
     state["consecutive_scan_failures"] = 0
     state["scan_failure_alert_sent"] = False
     state["total_scans"] = state.get("total_scans", 0) + 1
-    key_levels = build_key_levels(df_15m, df_1m, now)
     state["key_levels_text"] = _format_levels(key_levels)
-
-    swing_highs, swing_lows = swing_highs_lows(df_15m)
-    trend = trend_from_structure(df_15m, swing_highs, swing_lows)
-    current_price = feed.get_current_price()
 
     # ── Determine which strategies to try this cycle ──────────────────
     strategies_to_run: list[str] = []
@@ -603,6 +602,16 @@ async def _send_scan_status(
     await send_telegram_all(msg, bot)
 
 
+def _run_trailing_price_sync():
+    """Run in thread: get current price for trailing. Keeps event loop responsive."""
+    try:
+        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
+        return feed.get_current_price() if feed.is_connected() else None
+    except Exception as e:
+        logger.warning("Feed error in trailing: %s", e)
+        return None
+
+
 async def run_trailing(bot=None):
     """Check active trades for trail milestones and stop hit. Send alerts."""
     if not bot or not TELEGRAM_CHAT_IDS:
@@ -614,12 +623,8 @@ async def run_trailing(bot=None):
     if not active_list:
         return
 
-    try:
-        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
-        current_price = feed.get_current_price() if feed.is_connected() else None
-    except Exception as e:
-        logger.warning("Feed error in trailing: %s", e)
-        return
+    loop = asyncio.get_event_loop()
+    current_price = await loop.run_in_executor(None, _run_trailing_price_sync)
     if current_price is None:
         return
 

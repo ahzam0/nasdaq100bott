@@ -210,9 +210,18 @@ DASHBOARD_HTML = r"""
     }
 
     async function fetchJson(path) {
-      const r = await fetch(path);
-      if (!r.ok) throw new Error(r.statusText);
-      return r.json();
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const r = await fetch(path, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (!r.ok) throw new Error(r.statusText);
+        return r.json();
+      } catch (e) {
+        clearTimeout(t);
+        if (e.name === 'AbortError') throw new Error('Request timeout');
+        throw e;
+      }
     }
 
     async function refreshStatus() {
@@ -469,8 +478,8 @@ def api_config():
 
 
 def start_dashboard(host: str = "0.0.0.0", port: int = 5050, debug: bool = False) -> None:
-    """Start the Flask dashboard server."""
-    app.run(host=host, port=port, debug=debug)
+    """Start the Flask dashboard server. Threaded so requests stay responsive while bot runs."""
+    app.run(host=host, port=port, debug=debug, threaded=True)
 
 
 if __name__ == "__main__":
