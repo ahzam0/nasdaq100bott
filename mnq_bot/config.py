@@ -77,6 +77,8 @@ SKIP_NFP_DAYS = True
 
 SCAN_ACTIVE = True
 SHOW_SCAN_STATUS = os.getenv("MNQ_SHOW_SCAN_STATUS", "true").lower() in ("1", "true", "yes")
+# Throttle routine scan status messages (No setup, Rejected, etc.) to avoid spamming every minute
+SCAN_STATUS_INTERVAL_MINUTES = int(os.getenv("MNQ_SCAN_STATUS_INTERVAL_MINUTES", "5"))
 DAILY_SUMMARY_HOUR = int(os.getenv("MNQ_DAILY_SUMMARY_HOUR", "11"))  # Send daily summary (EST)
 
 # Strategy – DEFAULT FOR LIVE SIGNALS

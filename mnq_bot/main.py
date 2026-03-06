@@ -48,6 +48,7 @@ from config import (
     TELEGRAM_CHAT_ID,
     TELEGRAM_CHAT_IDS,
     SHOW_SCAN_STATUS,
+    SCAN_STATUS_INTERVAL_MINUTES,
     TRAIL_ALERTS_ENABLED,
     TRAIL_MODE,
     TARGET_MIN_TRADES_PER_DAY,
@@ -527,9 +528,20 @@ async def _send_scan_status(
     trades_today: int,
     reason: str,
 ) -> None:
-    """Send a one-line scan status to Telegram so users see what the bot is doing."""
+    """Send a one-line scan status to Telegram at most every SCAN_STATUS_INTERVAL_MINUTES to avoid spamming."""
     if not SHOW_SCAN_STATUS or not bot or not TELEGRAM_CHAT_IDS:
         return
+    state = get_state()
+    last_sent = state.get("last_scan_status_sent_at")
+    if last_sent is not None and isinstance(last_sent, (int, float)):
+        try:
+            last_dt = datetime.fromtimestamp(last_sent, tz=ZoneInfo("America/New_York"))
+            if (now - last_dt).total_seconds() < SCAN_STATUS_INTERVAL_MINUTES * 60:
+                logger.debug("Scan status throttled (next in %d min)", SCAN_STATUS_INTERVAL_MINUTES)
+                return
+        except Exception:
+            pass
+    state["last_scan_status_sent_at"] = now.timestamp()
     time_est = now.strftime("%I:%M %p EST")
     price_str = f"{current_price:,.2f}" if current_price is not None else "—"
     level_count = _count_levels(key_levels)
