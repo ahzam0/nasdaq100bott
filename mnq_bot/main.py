@@ -70,13 +70,6 @@ from config import (
     ML_FILTER_THRESHOLD,
     WEEKLY_REPORT_DAY,
     WEEKLY_REPORT_HOUR,
-    SCALP_MAX_TRADES_PER_DAY,
-    SCALP_MAX_RISK_PTS,
-    SCALP_TP1_PTS,
-    SCALP_TP2_PTS,
-    SCALP_COOLDOWN_BARS,
-    SCALP_MIN_ATR,
-    SCALP_MOMENTUM_THRESHOLD,
     REALTIME_ORDERFLOW_ENABLED,
     ALPACA_DATA_API_KEY,
     ALPACA_DATA_SECRET_KEY,
@@ -92,9 +85,6 @@ from strategy import (
     ActiveTrade,
     next_milestone_to_trail,
     stop_for_milestone,
-    compute_volume_flow,
-    detect_scalp,
-    compute_smart_money_score,
 )
 from bot import (
     register_commands,
@@ -185,7 +175,6 @@ async def _record_scan_failure(state: dict, bot, reason: str) -> None:
 
 
 async def _run_single_strategy(
-    strat_key: str,
     bot,
     state: dict,
     now,
@@ -198,105 +187,48 @@ async def _run_single_strategy(
     swing_lows,
     trend,
     current_price: float,
-    active_strat: str,
 ) -> None:
-    """Run detection + trade processing for a single strategy (riley or scalp)."""
-    is_scalp = (strat_key == "scalp")
-    setup = None
-    setup_name_label = ""
-
-    if is_scalp:
-        flow = compute_volume_flow(df_1m)
-        if flow is None:
-            if active_strat != "both":
-                await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No flow data (scalp)")
-            return
-
-        last_trade_ts = state.get("last_scalp_trade_ts")
-        if last_trade_ts:
-            from datetime import datetime as _dt
-            try:
-                lt = _dt.fromisoformat(last_trade_ts) if isinstance(last_trade_ts, str) else last_trade_ts
-                cooldown_sec = SCALP_COOLDOWN_BARS * 60
-                if (now - lt).total_seconds() < cooldown_sec:
-                    logger.debug("Scalp cooldown: %ds remaining", cooldown_sec - (now - lt).total_seconds())
-                    return
-            except Exception:
-                pass
-
-        smart_money = None
-        try:
-            smart_money = compute_smart_money_score()
-            logger.debug("Smart Money Score: %.1f (%s) conf=%.0f%%",
-                         smart_money.score, smart_money.bias, smart_money.confidence * 100)
-        except Exception as e:
-            logger.debug("Smart Money Score unavailable: %s", e)
-
-        setup = detect_scalp(
-            df_1m, flow, swing_highs, swing_lows,
-            tp1_pts=SCALP_TP1_PTS,
-            tp2_pts=SCALP_TP2_PTS,
-            max_risk_pts=SCALP_MAX_RISK_PTS,
-            min_atr=SCALP_MIN_ATR,
-            momentum_threshold=SCALP_MOMENTUM_THRESHOLD,
-            smart_money=smart_money,
-        )
-        if setup is None:
-            if active_strat != "both":
-                src = f"REAL {flow.source}" if flow.is_real else "proxy"
-                sm_info = f" SM={smart_money.score:+.0f}" if smart_money else ""
-                flow_info = f"score={flow.momentum_score:+.0f} VWAP={flow.vwap:.0f} [{src}]{sm_info}"
-                await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"No scalp ({flow_info})")
-            return
-        setup_name_label = f"⚡ SCALP {setup.signal_type}"
-    else:
-        setup = detect_setup(
-            df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
-            level_tolerance_pts=LEVEL_TOLERANCE_PTS,
-            require_trend_only=REQUIRE_TREND_ONLY,
-            retest_only=RETEST_ONLY,
-            min_body_pts=MIN_BODY_PTS,
-        )
-        if setup is None:
-            if active_strat != "both":
-                await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup")
-            return
-        setup_name_label = setup.setup_type.value
-
-    risk_pts = abs(setup.entry_price - setup.stop_price)
-
-    if not is_scalp:
-        if TP1_RR > 0 and risk_pts > 0:
-            if setup.direction == "LONG":
-                setup.target1_price = setup.entry_price + risk_pts * TP1_RR
-            else:
-                setup.target1_price = setup.entry_price - risk_pts * TP1_RR
-        if TP2_RR > 0 and risk_pts > 0:
-            if setup.direction == "LONG":
-                setup.target2_price = setup.entry_price + risk_pts * TP2_RR
-            else:
-                setup.target2_price = setup.entry_price - risk_pts * TP2_RR
-
-    effective_max_risk = SCALP_MAX_RISK_PTS if is_scalp else MAX_RISK_PTS
-    if effective_max_risk is not None and risk_pts > effective_max_risk:
-        if active_strat != "both":
-            await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup (stop too wide)")
+    """Run detection + trade processing for Riley (Trend & Key Levels) only."""
+    setup = detect_setup(
+        df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
+        level_tolerance_pts=LEVEL_TOLERANCE_PTS,
+        require_trend_only=REQUIRE_TREND_ONLY,
+        retest_only=RETEST_ONLY,
+        min_body_pts=MIN_BODY_PTS,
+    )
+    if setup is None:
+        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup")
         return
 
-    if not is_scalp:
-        mins_since_7 = (now.hour - 7) * 60 + now.minute if 7 <= now.hour < 12 else 0
-        use_fallback_rr = (
-            TARGET_MIN_TRADES_PER_DAY >= 1
-            and FALLBACK_AFTER_MINUTES > 0
-            and FALLBACK_MIN_RR is not None
-            and state["trades_today"] == 0
-            and mins_since_7 >= FALLBACK_AFTER_MINUTES
-        )
-        min_rr_use = FALLBACK_MIN_RR if use_fallback_rr else MIN_RR_RATIO
-        if TP1_RR > 0:
-            min_rr_use = TP1_RR
-    else:
-        min_rr_use = 0.5
+    setup_name_label = setup.setup_type.value
+    risk_pts = abs(setup.entry_price - setup.stop_price)
+
+    if TP1_RR > 0 and risk_pts > 0:
+        if setup.direction == "LONG":
+            setup.target1_price = setup.entry_price + risk_pts * TP1_RR
+        else:
+            setup.target1_price = setup.entry_price - risk_pts * TP1_RR
+    if TP2_RR > 0 and risk_pts > 0:
+        if setup.direction == "LONG":
+            setup.target2_price = setup.entry_price + risk_pts * TP2_RR
+        else:
+            setup.target2_price = setup.entry_price - risk_pts * TP2_RR
+
+    if MAX_RISK_PTS is not None and risk_pts > MAX_RISK_PTS:
+        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup (stop too wide)")
+        return
+
+    mins_since_7 = (now.hour - 7) * 60 + now.minute if 7 <= now.hour < 12 else 0
+    use_fallback_rr = (
+        TARGET_MIN_TRADES_PER_DAY >= 1
+        and FALLBACK_AFTER_MINUTES > 0
+        and FALLBACK_MIN_RR is not None
+        and state["trades_today"] == 0
+        and mins_since_7 >= FALLBACK_AFTER_MINUTES
+    )
+    min_rr_use = FALLBACK_MIN_RR if use_fallback_rr else MIN_RR_RATIO
+    if TP1_RR > 0:
+        min_rr_use = TP1_RR
 
     orderflow_summary = None
     use_orderflow_effective = state.get("use_orderflow", USE_ORDERFLOW)
@@ -311,9 +243,8 @@ async def _run_single_strategy(
         orderflow_summary=orderflow_summary,
     )
     if not result.valid:
-        logger.info("Entry rejected (%s): %s", strat_key, result.reason)
-        if active_strat != "both":
-            await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"Rejected: {result.reason}")
+        logger.info("Entry rejected: %s", result.reason)
+        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"Rejected: {result.reason}")
         return
 
     ml_score = None
@@ -324,8 +255,7 @@ async def _run_single_strategy(
             ml_score = ml_result.get("score")
             if not ml_result.get("pass"):
                 logger.info("ML filter rejected setup: score=%.3f (threshold=%.2f)", ml_score, ML_FILTER_THRESHOLD)
-                if active_strat != "both":
-                    await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"ML filter: score {ml_score:.2f}")
+                await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], f"ML filter: score {ml_score:.2f}")
                 return
         except Exception as e:
             logger.debug("ML filter skipped: %s", e)
@@ -351,8 +281,6 @@ async def _run_single_strategy(
 
     time_est = now.strftime("%I:%M %p EST")
     tf_note = "1-min | 15-min trend: " + trend.value
-    if is_scalp:
-        tf_note = f"⚡ Scalp | {setup.signal_type} | momentum {setup.momentum_score:+.0f}"
     msg = format_trade_alert(
         setup_name=setup_name_label,
         time_est=time_est,
@@ -398,8 +326,6 @@ async def _run_single_strategy(
         "stop": trade.current_stop,
     })
     state["trades_today"] += 1
-    if is_scalp:
-        state["last_scalp_trade_ts"] = now.isoformat()
     log_trade(setup.direction, setup.entry_price, setup.stop_price, setup.target1_price, setup.target2_price, "open", notes=setup.key_level_name)
 
 
@@ -443,16 +369,10 @@ async def run_scan(bot=None):
     if not in_scan_window():
         return
 
-    active_strat = state.get("active_strategy", ACTIVE_STRATEGY)
-    if active_strat == "both":
-        max_trades = MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY
-    elif active_strat == "scalp":
-        max_trades = SCALP_MAX_TRADES_PER_DAY
-    else:
-        max_trades = MAX_TRADES_PER_DAY
+    max_trades = MAX_TRADES_PER_DAY
 
     if state["trades_today"] >= max_trades:
-        logger.debug("Scan skipped: trades_today=%d >= max=%d (%s)", state["trades_today"], max_trades, active_strat)
+        logger.debug("Scan skipped: trades_today=%d >= max=%d", state["trades_today"], max_trades)
         return
 
     # VIX filter: block or reduce risk on high volatility days
@@ -502,25 +422,11 @@ async def run_scan(bot=None):
     state["total_scans"] = state.get("total_scans", 0) + 1
     state["key_levels_text"] = _format_levels(key_levels)
 
-    # ── Determine which strategies to try this cycle ──────────────────
-    strategies_to_run: list[str] = []
-    if active_strat == "both":
-        strategies_to_run = ["riley", "scalp"]
-    else:
-        strategies_to_run = [active_strat]
-
-    trades_before = state["trades_today"]
-    for strat_key in strategies_to_run:
-        if state["trades_today"] >= max_trades:
-            break
-        await _run_single_strategy(
-            strat_key, bot, state, now, vix_factor, max_trades,
-            df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
-            current_price, active_strat,
-        )
-
-    if active_strat == "both" and state["trades_today"] == trades_before:
-        await _send_scan_status(bot, now, key_levels, trend, current_price, state["trades_today"], "No setup (both strategies)")
+    await _run_single_strategy(
+        bot, state, now, vix_factor, max_trades,
+        df_1m, df_15m, key_levels, swing_highs, swing_lows, trend,
+        current_price,
+    )
 
     save_trade_state()
 

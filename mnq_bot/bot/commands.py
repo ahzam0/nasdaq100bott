@@ -25,12 +25,6 @@ from config import (
     INSTRUMENT,
     MAX_RISK_PER_TRADE_USD,
     MAX_TRADES_PER_DAY,
-    SCALP_MAX_TRADES_PER_DAY,
-    SCALP_TP1_PTS,
-    SCALP_TP2_PTS,
-    SCALP_MAX_RISK_PTS,
-    SCALP_MIN_ATR,
-    SCALP_MOMENTUM_THRESHOLD,
     TELEGRAM_CHAT_ID,
     TELEGRAM_CHAT_IDS,
     TRAIL_ALERTS_ENABLED,
@@ -112,8 +106,8 @@ def _load_trade_data():
             out["trades_today"] = max(0, data["trades_today"])
         if isinstance(data.get("last_trade_date"), str):
             out["last_trade_date"] = data["last_trade_date"]
-        if isinstance(data.get("active_strategy"), str) and data["active_strategy"] in ("riley", "scalp", "both"):
-            out["active_strategy"] = data["active_strategy"]
+        if isinstance(data.get("active_strategy"), str) and data["active_strategy"] == "riley":
+            out["active_strategy"] = "riley"
         if isinstance(data.get("active_trades"), list):
             restored = []
             for i, item in enumerate(data["active_trades"]):
@@ -165,7 +159,7 @@ def save_trade_state():
             "daily_pnl": _bot_state.get("daily_pnl", 0.0),
             "trades_today": _bot_state.get("trades_today", 0),
             "last_trade_date": _bot_state.get("last_trade_date", ""),
-            "active_strategy": _bot_state.get("active_strategy", ACTIVE_STRATEGY),
+            "active_strategy": "riley",
         }
         with open(TRADE_DATA_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -228,7 +222,7 @@ def get_main_keyboard():
             [KeyboardButton("📂 Positions"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
             [KeyboardButton("📌 Levels"), KeyboardButton("📋 History"), KeyboardButton("🔌 APIs")],
             [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity"), KeyboardButton("📊 Order flow")],
-            [KeyboardButton("🔄 Strategy"), KeyboardButton("🧠 Smart Money"), KeyboardButton("🤖 ML")],
+            [KeyboardButton("🧠 Smart Money"), KeyboardButton("🤖 ML")],
             [KeyboardButton("🌡 VIX"), KeyboardButton("❓ Help")],
         ],
         resize_keyboard=True,
@@ -276,16 +270,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     loop = asyncio.get_event_loop()
     price_line, feed_type = await loop.run_in_executor(None, _fetch_live_price_sync)
 
-    strat = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
-    if strat == "both":
-        strat_label = "📐+⚡ Both (Trend + SMC)"
-        effective_max = MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY
-    elif strat == "scalp":
-        strat_label = "⚡ Scalp (Smart Money)"
-        effective_max = SCALP_MAX_TRADES_PER_DAY
-    else:
-        strat_label = "📐 Trend & Key Levels"
-        effective_max = MAX_TRADES_PER_DAY
+    strat_label = "📐 Trend & Key Levels"
+    effective_max = MAX_TRADES_PER_DAY
     lines = [
         f"<b>📊 {INSTRUMENT} Bot Status</b>",
         "────────────────────",
@@ -991,7 +977,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/version</code> – Bot version\n"
         "<code>/backtest [days]</code> – Run short backtest (default 2 days)\n\n"
         "<b>Advanced</b>\n"
-        "<code>/strategy</code> – Switch Trend/Levels / Scalp (SMC) / Both\n"
+        "<code>/strategy</code> – Show active strategy (Trend & Key Levels)\n"
         "<code>/smartmoney</code> – Smart Money Score (6 sources)\n"
         "<code>/chart</code> – Live chart with key levels\n"
         "<code>/equity</code> – Equity curve chart + stats\n"
@@ -1444,101 +1430,20 @@ async def cmd_dashboard_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show current strategy and inline buttons to switch."""
+    """Show active strategy (Trend & Key Levels only)."""
     logger.info("/strategy from user %s", update.effective_user.id if update.effective_user else "?")
-    current = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
-    if current == "both":
-        label = "📐+⚡ Both (Trend + Smart Money)"
-        desc = (
-            "Runs BOTH: Trend/key-level reversal first, then Scalp (SMC-style) if no setup.\n"
-            f"Max trades/day: {MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY} combined"
-        )
-    elif current == "scalp":
-        label = "⚡ Scalp — Smart Money / Volume Flow"
-        rt_source = "Candle proxy (no API keys)"
-        try:
-            from data.realtime_collector import get_collector_manager
-            mgr = get_collector_manager()
-            if mgr.connected:
-                rt_source = mgr.source
-        except Exception:
-            pass
-        sm_line = ""
-        try:
-            from strategy.smart_money import compute_smart_money_score
-            sm = compute_smart_money_score()
-            sm_line = f"\nSmart Money: {sm.score:+.0f} ({sm.bias})"
-        except Exception:
-            sm_line = "\nSmart Money: loading..."
-        desc = (
-            f"Targets: +{SCALP_TP1_PTS:.0f} / +{SCALP_TP2_PTS:.0f} pts\n"
-            f"Max risk: {SCALP_MAX_RISK_PTS:.0f} pts  |  Max trades/day: {SCALP_MAX_TRADES_PER_DAY}\n"
-            f"Min ATR: {SCALP_MIN_ATR:.0f}  |  Momentum: {SCALP_MOMENTUM_THRESHOLD:.0f}\n"
-            f"Data: {rt_source}{sm_line}"
-        )
-    else:
-        label = "📐 Trend & Key Levels (Riley Coleman)"
-        desc = (
-            f"Max risk: ${MAX_RISK_PER_TRADE_USD:.0f}  |  Max trades/day: {MAX_TRADES_PER_DAY}\n"
-            "Key-level retest reversal with trend confirmation (200 EMA / structure)"
-        )
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📐 Trend/Levels", callback_data="strategy_riley"),
-            InlineKeyboardButton("⚡ Scalp (SMC)", callback_data="strategy_scalp"),
-            InlineKeyboardButton("📐+⚡ Both", callback_data="strategy_both"),
-        ]
-    ])
-
+    label = "📐 Trend & Key Levels (Riley Coleman)"
+    desc = (
+        f"Max risk: ${MAX_RISK_PER_TRADE_USD:.0f}  |  Max trades/day: {MAX_TRADES_PER_DAY}\n"
+        "Key-level retest reversal with trend confirmation (200 EMA / structure)"
+    )
     await _reply_html(
         update,
         f"<b>🔄 Active Strategy</b>\n"
         f"────────────────────\n"
         f"<b>{label}</b>\n\n"
-        f"<code>{desc}</code>\n\n"
-        f"<i>Tap a button below to switch. Next scan uses the selected strategy.</i>",
-        reply_markup=keyboard,
+        f"<code>{desc}</code>",
     )
-
-
-async def callback_strategy_switch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline button callback for strategy switching."""
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    if data == "strategy_riley":
-        new_strat = "riley"
-        label = "📐 Trend & Key Levels (Riley Coleman)"
-    elif data == "strategy_scalp":
-        new_strat = "scalp"
-        label = "⚡ Scalp — Smart Money / Volume Flow"
-    elif data == "strategy_both":
-        new_strat = "both"
-        label = "📐+⚡ Both (Trend + Smart Money)"
-    else:
-        return
-
-    old_strat = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
-    _bot_state["active_strategy"] = new_strat
-    _bot_state["last_scalp_trade_ts"] = None
-    save_trade_state()
-
-    if old_strat == new_strat:
-        await query.edit_message_text(
-            f"<b>🔄 Strategy unchanged</b>\n\nAlready on <b>{label}</b>",
-            parse_mode="HTML",
-        )
-    else:
-        logger.info("Strategy switched: %s → %s by user %s", old_strat, new_strat,
-                     update.effective_user.id if update.effective_user else "?")
-        await query.edit_message_text(
-            f"<b>✅ Strategy switched</b>\n\n"
-            f"Now using <b>{label}</b>\n\n"
-            f"<i>Next scan will use the new strategy.</i>",
-            parse_mode="HTML",
-        )
 
 
 async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1562,7 +1467,6 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
         "🔌 APIs": cmd_apis,
         "📉 Chart": cmd_chart,
         "📈 Equity": cmd_equity,
-        "🔄 Strategy": cmd_strategy,
         "🧠 Smart Money": cmd_smartmoney,
         "🌡 VIX": cmd_vix,
         "🤖 ML": cmd_ml,
@@ -1719,6 +1623,5 @@ def register_commands(application):
     application.add_handler(CommandHandler("reset", cmd_reset))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("pause", cmd_stop))
-    application.add_handler(CallbackQueryHandler(callback_strategy_switch, pattern="^strategy_"))
     application.add_handler(CallbackQueryHandler(callback_feed_toggle, pattern="^yahoo_ws_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_button))
