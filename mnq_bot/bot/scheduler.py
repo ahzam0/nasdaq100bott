@@ -15,6 +15,8 @@ from config import (
     DAILY_SUMMARY_HOUR,
     PREMARKET_START,
     RTH_END,
+    TRADE_SESSION_START_EST,
+    TRADE_SESSION_END_EST,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,10 +29,24 @@ def now_est() -> datetime:
 
 
 def in_scan_window() -> bool:
-    """True if current time (EST) is within scan window (default 7:00–11:00 AM EST)."""
+    """True if current time (EST) is within scan window (7:00–11:00 AM EST; levels + trade)."""
     t = now_est().time()
     start = time(int(PREMARKET_START.split(":")[0]), int(PREMARKET_START.split(":")[1]))
     end = time(int(RTH_END.split(":")[0]), int(RTH_END.split(":")[1]))
+    return start <= t < end
+
+
+def in_trade_window() -> bool:
+    """True if current time (EST) is within trade window (9:30–11:00 AM EST); signals ON."""
+    t = now_est().time()
+    start = time(
+        int(TRADE_SESSION_START_EST.split(":")[0]),
+        int(TRADE_SESSION_START_EST.split(":")[1]),
+    )
+    end = time(
+        int(TRADE_SESSION_END_EST.split(":")[0]),
+        int(TRADE_SESSION_END_EST.split(":")[1]),
+    )
     return start <= t < end
 
 

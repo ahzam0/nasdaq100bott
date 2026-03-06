@@ -402,7 +402,7 @@ def get_feed(broker: str = "paper", use_live_feed: bool = True, price_api_url: O
         from config import get_use_yahoo_ws_realtime, YAHOO_WS_QQQ_TO_NQ_RATIO
         if get_use_yahoo_ws_realtime():
             from data.yahoo_ws_realtime import get_or_create_yahoo_ws_client
-            ws_client = get_or_create_yahoo_ws_client(qqq_to_nq_ratio=YAHOO_WS_QQQ_TO_NQ_RATIO)
+            ws_client = get_or_create_yahoo_ws_client(qqq_to_nq_ratio=YAHOO_WS_QQQ_TO_NQ_RATIO, auto_start=False)
             if ws_client:
                 logger.info("Using Yahoo WebSocket feed (free, minimal delay)")
                 return YahooWSFeed(ws_client=ws_client)
@@ -421,3 +421,33 @@ def get_feed(broker: str = "paper", use_live_feed: bool = True, price_api_url: O
     if broker in ("paper", "ninjatrader", "tradovate"):
         return MockDataFeed()
     return MockDataFeed()
+
+
+def start_live_feed_session() -> None:
+    """Start WebSocket/live feed when session begins (e.g. 7:00 EST). Idempotent."""
+    try:
+        from config import BROKER, USE_LIVE_FEED, PRICE_API_URL
+        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
+        if getattr(feed, "_ws", None) is not None and hasattr(feed._ws, "start"):
+            feed._ws.start()
+            logger.info("Live feed session started (Yahoo WebSocket)")
+        if getattr(feed, "_md", None) is not None and hasattr(feed._md, "start"):
+            feed._md.start()
+            logger.info("Live feed session started (Tradovate MD)")
+    except Exception as e:
+        logger.debug("start_live_feed_session: %s", e)
+
+
+def end_live_feed_session() -> None:
+    """Stop WebSocket/live feed when session ends (e.g. 11:00 EST). Puts feed in rest."""
+    try:
+        from config import BROKER, USE_LIVE_FEED, PRICE_API_URL
+        feed = get_feed(BROKER, use_live_feed=USE_LIVE_FEED, price_api_url=PRICE_API_URL)
+        if getattr(feed, "_ws", None) is not None and hasattr(feed._ws, "stop"):
+            feed._ws.stop()
+            logger.info("Live feed session ended (Yahoo WebSocket — rest)")
+        if getattr(feed, "_md", None) is not None and hasattr(feed._md, "stop"):
+            feed._md.stop()
+            logger.info("Live feed session ended (Tradovate MD — rest)")
+    except Exception as e:
+        logger.debug("end_live_feed_session: %s", e)

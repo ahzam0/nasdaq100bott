@@ -47,13 +47,31 @@ MIN_RR_RATIO = 1.6
 PARTIAL_EXIT_PERCENT = 50
 SLIPPAGE_TICKS = 5  # Flag trade if fill is more than this from expected
 
-# Session: signals only 7:00–11:00 AM EST (fixed for live bot)
-SCAN_SESSION_EST = "7:00–11:00 AM EST"
+# Session — Riley Coleman best: 9:30–11:00 AM EST trade window; 7:00–9:29 scan-only (levels only)
+SCAN_SESSION_EST = "9:30–11:00 AM EST"
 PREMARKET_START = os.getenv("MNQ_PREMARKET_START", "07:00").strip() or "07:00"
 PREMARKET_END = "09:30"
 RTH_START = "09:30"
 RTH_END = os.getenv("MNQ_RTH_END", "11:00").strip() or "11:00"
+# Pre-market: scan only, no signals (mark levels silently)
+PRE_MARKET_SCAN_START_EST = "07:00"
+PRE_MARKET_SCAN_END_EST = "09:29"
+# Primary trade window — signals ON
+TRADE_SESSION_START_EST = "09:30"
+TRADE_SESSION_END_EST = "11:00"
+# Secondary (afternoon) — off by default
+SECONDARY_SESSION_ENABLED = False
+SECONDARY_SESSION_START = "14:00"
+SECONDARY_SESSION_END = "16:00"
 SESSION_OPENING_RANGE_MINUTES = 5  # 9:30–9:35
+PRE_MARKET_MODE = "SCAN_ONLY"  # SCAN_ONLY | TRADE
+
+# Day / news filters (Riley Coleman best: skip high-noise days)
+SKIP_MONDAY = True
+SKIP_CPI_DAYS = True
+SKIP_FOMC_DAYS = True
+SKIP_NFP_DAYS = True
+
 SCAN_ACTIVE = True
 SHOW_SCAN_STATUS = os.getenv("MNQ_SHOW_SCAN_STATUS", "true").lower() in ("1", "true", "yes")
 DAILY_SUMMARY_HOUR = int(os.getenv("MNQ_DAILY_SUMMARY_HOUR", "11"))  # Send daily summary (EST)

@@ -1,8 +1,8 @@
 """
 Run backtest of Riley Coleman MNQ strategy with $50,000 starting balance.
 Usage:
-  Synthetic data:   python run_backtest.py [--days 30] [--risk 75]
-  Historical (Yahoo): python run_backtest.py --live [--months 3] [--risk 330]
+  Synthetic data:   python run_backtest.py [--days 63] [--risk 75]   (default 3 months)
+  Historical (Yahoo): python run_backtest.py --live [--months 3] [--risk 330]   (default 3 months)
   Real-time feed:   python run_backtest.py --realtime [--loop 60]
 """
 
@@ -42,7 +42,7 @@ from backtest.live_data import fetch_live_backtest_data, _session_filter
 
 INITIAL_BALANCE = 50_000.0
 RISK_PER_TRADE = MAX_RISK_PER_TRADE_USD  # Match config so backtest default = bot risk
-DEFAULT_DAYS = 30
+DEFAULT_DAYS = 63  # ~3 months of trading days
 
 
 def print_report(r: BacktestResult) -> None:
@@ -102,7 +102,7 @@ def save_trades_csv(r: BacktestResult, path: Path) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Backtest MNQ Riley Coleman strategy")
     parser.add_argument("--live", action="store_true", help="Use live market data from Yahoo Finance (NQ=F)")
-    parser.add_argument("--months", type=int, default=0, metavar="N", help="With --live: use 1 month of data (15m expanded to 1m). Default: 7 days 1m.")
+    parser.add_argument("--months", type=int, default=3, metavar="N", help="With --live: months of data (15m expanded to 1m). Default: 3.")
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help="Trading days (synthetic only)")
     parser.add_argument("--risk", type=float, default=RISK_PER_TRADE, help="Risk per trade in USD")
     parser.add_argument("--balance", type=float, default=INITIAL_BALANCE, help="Starting balance")

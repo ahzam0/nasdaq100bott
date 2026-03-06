@@ -19,7 +19,7 @@ import sys
 import threading
 import traceback
 import warnings
-from datetime import time, datetime, timedelta
+from datetime import date, time, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -36,8 +36,6 @@ from config import (
     INSTRUMENT,
     USE_LIVE_FEED,
     PRICE_API_URL,
-    USE_ORDERFLOW,
-    ORDERFLOW_API_URL,
     LEVEL_TOLERANCE_PTS,
     MAX_DAILY_LOSS_USD,
     MAX_RISK_PTS,
@@ -61,7 +59,12 @@ from config import (
     RETRAIN_DAY_OF_WEEK,
     RETRAIN_HOUR_EST,
     RETRAIN_MINUTE_EST,
+    RTH_END,
     SCAN_SESSION_EST,
+    SKIP_MONDAY,
+    SKIP_CPI_DAYS,
+    SKIP_FOMC_DAYS,
+    SKIP_NFP_DAYS,
     VIX_FILTER_ENABLED,
     VIX_BLOCK_THRESHOLD,
     VIX_REDUCE_THRESHOLD,
@@ -99,8 +102,11 @@ from bot import (
     send_telegram_all,
     now_est,
     in_scan_window,
+    in_trade_window,
 )
 import pandas as pd
+from news_filter import should_trade_today
+from data.feed import start_live_feed_session, end_live_feed_session
 from broker import get_broker
 from utils import setup_logging, log_trade, contracts_from_risk
 
@@ -110,6 +116,15 @@ from telegram.warnings import PTBUserWarning
 
 logger = logging.getLogger(__name__)
 EST = ZoneInfo("America/New_York")
+
+
+def _parse_session_end_time():
+    """Parse RTH_END (e.g. '11:00') to datetime.time for run_daily."""
+    parts = RTH_END.strip().split(":")
+    hour = int(parts[0]) if parts else 11
+    minute = int(parts[1]) if len(parts) > 1 else 0
+    return time(hour, minute, tzinfo=EST)
+
 
 # ---------------------------------------------------------------------------
 # Crash-guard decorator: wraps every PTB job callback so an unhandled
@@ -135,25 +150,6 @@ def _safe_job(func):
 _last_heartbeat: datetime | None = None
 _consecutive_job_errors: int = 0
 MAX_CONSECUTIVE_JOB_ERRORS = 20
-
-
-def _fetch_orderflow_summary(timeout_sec: float = 2.0) -> dict | None:
-    """Fetch live order flow summary from our API. Returns None on failure or timeout."""
-    if not ORDERFLOW_API_URL:
-        return None
-    try:
-        import urllib.request
-        url = ORDERFLOW_API_URL.rstrip("/") + "/orderflow/summary"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=timeout_sec) as r:
-            import json
-            return json.loads(r.read().decode())
-    except Exception as e:
-        if USE_ORDERFLOW:
-            logger.warning("Order flow fetch failed (check ORDERFLOW_API_URL and server): %s", e)
-        else:
-            logger.debug("Order flow fetch failed: %s", e)
-        return None
 
 
 SCAN_FAILURE_ALERT_THRESHOLD = 5  # Alert after this many consecutive feed/data failures
@@ -230,17 +226,10 @@ async def _run_single_strategy(
     if TP1_RR > 0:
         min_rr_use = TP1_RR
 
-    orderflow_summary = None
-    use_orderflow_effective = state.get("use_orderflow", USE_ORDERFLOW)
-    if use_orderflow_effective and ORDERFLOW_API_URL:
-        orderflow_summary = _fetch_orderflow_summary()
-        if orderflow_summary is not None:
-            state["last_orderflow_summary"] = orderflow_summary
-
     result = validate_entry(
         setup, now, state["trades_today"], max_trades,
         min_rr_ratio=min_rr_use,
-        orderflow_summary=orderflow_summary,
+        orderflow_summary=None,
     )
     if not result.valid:
         logger.info("Entry rejected: %s", result.reason)
@@ -361,13 +350,42 @@ async def run_scan(bot=None):
         return
     maybe_reset_daily()
     state = get_state()
+    now = now_est()
+    today_iso = date.today().isoformat()
+
+    # Day/news filter: skip Monday, CPI, FOMC, NFP (Riley Coleman best)
+    tradeable, reason = should_trade_today(
+        skip_monday=SKIP_MONDAY,
+        skip_cpi=SKIP_CPI_DAYS,
+        skip_fomc=SKIP_FOMC_DAYS,
+        skip_nfp=SKIP_NFP_DAYS,
+    )
+    if not tradeable:
+        if state.get("skip_day_alert_date") != today_iso:
+            await send_telegram_all(
+                f"⛔ <b>NO TRADE TODAY</b>\n\n"
+                f"🚫 {reason}\n\n"
+                f"📅 Next best trading day: Tuesday–Thursday\n"
+                f"💤 Bot is in STANDBY mode today.",
+                bot,
+            )
+            state["skip_day_alert_date"] = today_iso
+            save_trade_state()
+        return
+
     if not state.get("scan_active", True):
         logger.debug("Scan skipped: paused by user")
         return
-    now = now_est()
 
     if not in_scan_window():
         return
+
+    # Auto-start live feed (WebSocket) when session starts; keeps rest outside session
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, start_live_feed_session)
+    except Exception as e:
+        logger.debug("start_live_feed_session: %s", e)
 
     max_trades = MAX_TRADES_PER_DAY
 
@@ -421,6 +439,23 @@ async def run_scan(bot=None):
     state["scan_failure_alert_sent"] = False
     state["total_scans"] = state.get("total_scans", 0) + 1
     state["key_levels_text"] = _format_levels(key_levels)
+
+    # Trade window 9:30–11:00 EST only; 7:00–9:29 is SCAN_ONLY (levels updated above, no signals)
+    if not in_trade_window():
+        save_trade_state()
+        return
+
+    # Send "MARKET OPEN" once per day when entering trade window
+    if state.get("market_open_alert_date") != today_iso:
+        await send_telegram_all(
+            f"✅ <b>MARKET OPEN</b> — Scanning for setups\n\n"
+            f"🕐 Primary window: 9:30–11:00 AM EST\n"
+            f"🎯 Max trades today: {MAX_TRADES_PER_DAY}\n"
+            f"💰 Risk per trade: 1%\n"
+            f"📊 Min R:R required: 1:3",
+            bot,
+        )
+        state["market_open_alert_date"] = today_iso
 
     await _run_single_strategy(
         bot, state, now, vix_factor, max_trades,
@@ -740,6 +775,16 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 @_safe_job
+async def session_end_feed_job(context: ContextTypes.DEFAULT_TYPE):
+    """When session ends (e.g. 11:00 EST): disconnect WebSocket so feed is at rest until next session."""
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, end_live_feed_session)
+    except Exception as e:
+        logger.debug("session_end_feed_job: %s", e)
+
+
+@_safe_job
 async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
     """Periodic health check: log status, run GC, detect stalls."""
     global _consecutive_job_errors
@@ -757,56 +802,6 @@ async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
     gc.collect()
 
 
-@_safe_job
-async def smart_money_insider_job(context: ContextTypes.DEFAULT_TYPE):
-    """Daily 6 AM EST: refresh insider filings + 13F (background thread)."""
-    import concurrent.futures
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        try:
-            from data.insider_tracker import fetch_insider_signal
-            await loop.run_in_executor(pool, fetch_insider_signal)
-            logger.info("Smart Money: insider filings refreshed")
-        except Exception as e:
-            logger.debug("Insider refresh failed: %s", e)
-        try:
-            from data.institutional_tracker import fetch_institutional_signal
-            await loop.run_in_executor(pool, fetch_institutional_signal)
-            logger.info("Smart Money: 13F institutional data refreshed")
-        except Exception as e:
-            logger.debug("13F refresh failed: %s", e)
-
-
-@_safe_job
-async def smart_money_premarket_job(context: ContextTypes.DEFAULT_TYPE):
-    """Daily 8 AM EST: compute pre-market levels (once per session)."""
-    loop = asyncio.get_event_loop()
-    try:
-        from data.premarket_levels import fetch_premarket_levels
-        await loop.run_in_executor(None, fetch_premarket_levels)
-        logger.info("Smart Money: pre-market levels computed")
-    except Exception as e:
-        logger.debug("Pre-market levels failed: %s", e)
-
-
-@_safe_job
-async def smart_money_refresh_job(context: ContextTypes.DEFAULT_TYPE):
-    """Every 5 min during session: refresh options flow + market internals."""
-    if not in_scan_window():
-        return
-    loop = asyncio.get_event_loop()
-    try:
-        from data.options_flow import scan_options_flow
-        await loop.run_in_executor(None, scan_options_flow)
-    except Exception as e:
-        logger.debug("Options flow refresh failed: %s", e)
-    try:
-        from data.market_internals import fetch_market_internals
-        await loop.run_in_executor(None, fetch_market_internals)
-    except Exception as e:
-        logger.debug("Market internals refresh failed: %s", e)
-
-
 async def _post_init(app: Application) -> None:
     """Notify users on startup so they know the bot is online."""
     for cid in TELEGRAM_CHAT_IDS:
@@ -817,7 +812,6 @@ async def _post_init(app: Application) -> None:
                     "<b>✅ MNQ Bot Online</b>\n"
                     "────────────────────\n"
                     f"v2.3 │ Scanning {SCAN_SESSION_EST}\n"
-                    "Smart Money + Order Flow active.\n"
                     "Use buttons below or /help."
                 ),
                 parse_mode="HTML",
@@ -839,6 +833,10 @@ def _build_app() -> Application:
 
     app.job_queue.run_repeating(scan_job, interval=60, first=10)
     app.job_queue.run_daily(daily_summary_job, time=time(11, 0, tzinfo=EST))
+    # Auto-disconnect live feed (WebSocket) when session ends — rest until next session
+    _session_end_time = _parse_session_end_time()
+    app.job_queue.run_daily(session_end_feed_job, time=_session_end_time)
+    logger.info("Session feed control: WebSocket on when session starts, rest at %s EST", _session_end_time.strftime("%H:%M"))
     app.job_queue.run_repeating(heartbeat_job, interval=300, first=60)
 
     if AUTO_RETRAIN_ENABLED and app.job_queue:
@@ -856,12 +854,6 @@ def _build_app() -> Application:
         days=(WEEKLY_REPORT_DAY,),
     )
     logger.info("Weekly report scheduled: day=%s %02d:00 EST", WEEKLY_REPORT_DAY, WEEKLY_REPORT_HOUR)
-
-    # Smart Money data collector schedule
-    app.job_queue.run_daily(smart_money_insider_job, time=time(6, 0, tzinfo=EST))
-    app.job_queue.run_daily(smart_money_premarket_job, time=time(8, 0, tzinfo=EST))
-    app.job_queue.run_repeating(smart_money_refresh_job, interval=300, first=30)
-    logger.info("Smart Money collectors scheduled: insider 6AM, premarket 8AM, options+internals every 5min")
 
     return app
 
@@ -901,7 +893,7 @@ def main():
         attempt += 1
         try:
             logger.info(
-                "MNQ Bot v2.3 starting (attempt %d) – Riley Coleman + Scalp + Smart Money. Signals only %s.",
+                "MNQ Bot v2.3 starting (attempt %d) – Riley Coleman. Signals only %s.",
                 attempt, SCAN_SESSION_EST,
             )
             app = _build_app()

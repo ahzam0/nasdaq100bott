@@ -115,6 +115,21 @@ def cron_scan():
     except Exception as e:
         return Response("Error", status=500)
 
+
+@app.route("/cron/session-end", methods=["GET", "POST"])
+def cron_session_end():
+    """Call when session ends (e.g. 11:00 EST daily) to disconnect WebSocket so feed is at rest. Optional cron: same secret as /cron/scan."""
+    secret = os.getenv("CRON_SECRET", "").strip()
+    if secret and request.args.get("secret") != secret:
+        return Response("Forbidden", status=403)
+    try:
+        from data.feed import end_live_feed_session
+        end_live_feed_session()
+        return Response("OK", status=200)
+    except Exception as e:
+        return Response("Error", status=500)
+
+
 def _settings_secret_ok():
     secret = os.getenv("CRON_SECRET", "").strip()
     return secret and request.args.get("secret") == secret
@@ -122,7 +137,7 @@ def _settings_secret_ok():
 
 @app.route("/")
 def index():
-    return "MNQ Bot is running. /webhook for Telegram, /cron/scan for scan. Visit /set-webhook once to register. Settings: /settings?secret=YOUR_CRON_SECRET", 200
+    return "MNQ Bot is running. /webhook for Telegram, /cron/scan for scan, /cron/session-end at 11:00 EST optional. Settings: /settings?secret=YOUR_CRON_SECRET", 200
 
 
 @app.route("/settings", methods=["GET"])

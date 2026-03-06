@@ -29,7 +29,6 @@ from config import (
     TELEGRAM_CHAT_IDS,
     TRAIL_ALERTS_ENABLED,
     TRAIL_MODE,
-    USE_ORDERFLOW,
     AUTO_RETRAIN_ENABLED,
     RETRAIN_DAY_OF_WEEK,
     RETRAIN_HOUR_EST,
@@ -37,7 +36,6 @@ from config import (
     BROKER,
     USE_LIVE_FEED,
     PRICE_API_URL,
-    ORDERFLOW_API_URL,
     USE_ECONOMIC_CALENDAR,
     TRADE_DATA_JSON,
     get_use_yahoo_ws_realtime,
@@ -65,8 +63,6 @@ def _load_persisted_state():
                 out["risk_per_trade"] = max(1, min(500, float(data["risk_per_trade"])))
             if isinstance(data.get("contracts"), int):
                 out["contracts"] = max(1, min(10, data["contracts"]))
-            if "use_orderflow" in data:
-                out["use_orderflow"] = bool(data["use_orderflow"])
     except Exception as e:
         logger.debug("Could not load bot_state.json: %s", e)
     return out
@@ -82,7 +78,6 @@ def _save_persisted_state():
             json.dump({
                 "risk_per_trade": _bot_state.get("risk_per_trade"),
                 "contracts": _bot_state.get("contracts"),
-                "use_orderflow": _bot_state.get("use_orderflow"),
             }, f, indent=0)
     except Exception as e:
         logger.warning("Could not save bot_state.json: %s", e)
@@ -173,7 +168,6 @@ _bot_state = {
     "trail_mode": "alert",
     "risk_per_trade": MAX_RISK_PER_TRADE_USD,
     "contracts": DEFAULT_CONTRACTS,
-    "use_orderflow": False,
     "session_premarket": True,
     "session_rth": True,
     "trades_today": 0,
@@ -221,8 +215,8 @@ def get_main_keyboard():
             [KeyboardButton("📊 Status"), KeyboardButton("🔍 Scan status")],
             [KeyboardButton("📂 Positions"), KeyboardButton("💰 Live Price"), KeyboardButton("📈 P&L")],
             [KeyboardButton("📌 Levels"), KeyboardButton("📋 History"), KeyboardButton("🔌 APIs")],
-            [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity"), KeyboardButton("📊 Order flow")],
-            [KeyboardButton("🧠 Smart Money"), KeyboardButton("🤖 ML")],
+            [KeyboardButton("📉 Chart"), KeyboardButton("📈 Equity")],
+            [KeyboardButton("🤖 ML")],
             [KeyboardButton("🌡 VIX"), KeyboardButton("❓ Help")],
         ],
         resize_keyboard=True,
@@ -670,35 +664,12 @@ def _get_apis_status_sync() -> list[str]:
     except Exception as e:
         lines.append(f"<b>Price feed</b>  error: {_esc(str(e))}")
     lines.append("")
-    try:
-        of_url = (ORDERFLOW_API_URL or "").strip()
-        if not of_url:
-            lines.append("<b>Order flow</b>  not configured")
-        else:
-            lines.append(f"<b>Order flow</b>  <code>{_esc(of_url)}</code>")
-            try:
-                from main import _fetch_orderflow_summary
-                summary = _fetch_orderflow_summary(timeout_sec=2)
-                if summary is None:
-                    lines.append("  Reachable: <b>no</b>")
-                    lines.append("  Data: <b>no</b>")
-                else:
-                    lines.append("  Reachable: <b>yes</b>")
-                    lines.append("  Data: <b>yes</b>")
-                    src = summary.get("source", "?")
-                    age = summary.get("age_seconds", "?")
-                    lines.append(f"  Source: <b>{_esc(str(src))}</b>  Age: <code>{age}s</code>")
-            except Exception as e:
-                lines.append(f"  Reachable: <b>no</b> ({_esc(str(e)[:40])})")
-    except Exception as e:
-        lines.append(f"<b>Order flow</b>  error: {_esc(str(e))}")
-    lines.append("")
     lines.append(f"<b>Economic calendar</b>  <b>{'on' if USE_ECONOMIC_CALENDAR else 'off'}</b>")
     return lines
 
 
 async def cmd_apis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show all APIs status (price feed, order flow, calendar)."""
+    """Show all APIs status (price feed, calendar)."""
     loop = asyncio.get_event_loop()
     lines = await loop.run_in_executor(None, _get_apis_status_sync)
     await _reply_html(update, "\n".join(lines))
@@ -960,12 +931,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/weekly</code> – 7-day P&L\n"
         "<code>/monthly</code> – 30-day P&L\n"
         "<code>/history</code> – Last 10 trades\n"
-        "<code>/orderflow</code> – Order flow status\n"
         "<code>/demo signal</code> – Demo trade alert\n"
         "<code>/demo trail</code> – Demo trail alert\n"
         "<code>/demo levels</code> – Demo key levels\n"
-        "📊 <b>Order flow</b> – Toggle order flow in strategy ON/OFF\n"
-        "🔌 <b>APIs</b> – All APIs status (price, order flow, calendar)\n\n"
+        "🔌 <b>APIs</b> – All APIs status (price, calendar)\n\n"
         "<b>Settings</b>\n"
         "<code>/config</code> – Current settings\n"
         "<code>/risk [amount]</code> – Max $ per trade\n"
@@ -977,8 +946,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/version</code> – Bot version\n"
         "<code>/backtest [days]</code> – Run short backtest (default 2 days)\n\n"
         "<b>Advanced</b>\n"
-        "<code>/strategy</code> – Show active strategy (Trend & Key Levels)\n"
-        "<code>/smartmoney</code> – Smart Money Score (6 sources)\n"
+        "<code>/strategy</code> – Active strategy (Trend & Key Levels)\n"
         "<code>/chart</code> – Live chart with key levels\n"
         "<code>/equity</code> – Equity curve chart + stats\n"
         "<code>/vix</code> – VIX filter status\n"
@@ -1009,18 +977,10 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-def _effective_use_orderflow() -> bool:
-    """Order flow in strategy: from bot state if set, else config."""
-    if "use_orderflow" in _bot_state:
-        return bool(_bot_state["use_orderflow"])
-    return USE_ORDERFLOW
-
-
 async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show current bot config (risk, contracts, session, trail, order flow)."""
+    """Show current bot config (risk, contracts, session, trail)."""
     session = "ON" if _bot_state.get("session_premarket", True) else "OFF"
     trail = "ON" if _bot_state.get("trail_alerts", True) else "OFF"
-    of = "ON" if _effective_use_orderflow() else "OFF"
     await _reply_html(
         update,
         "<b>⚙️ Config</b>\n"
@@ -1029,68 +989,7 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Contracts <code>{_bot_state.get('contracts', 1)}</code>\n"
         f"Session scan <b>{session}</b>\n"
         f"Trail alerts <b>{trail}</b>\n"
-        f"Trail mode <b>{_bot_state.get('trail_mode', 'alert')}</b>\n"
-        f"Order flow <b>{of}</b>\n\n"
-        "<i>Tap 📊 Order flow to toggle.</i>"
-    )
-
-
-async def cmd_orderflow_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Toggle order flow in strategy on/off; persist and confirm."""
-    from config import ORDERFLOW_API_URL
-    current = _effective_use_orderflow()
-    new_value = not current
-    _bot_state["use_orderflow"] = new_value
-    _save_persisted_state()
-    label = "ON" if new_value else "OFF"
-    if new_value and not ORDERFLOW_API_URL:
-        await _reply_html(
-            update,
-            f"<b>📊 Order flow</b>\n"
-            f"────────────────────\n"
-            f"Strategy: <b>{label}</b>\n\n"
-            f"<i>Set MNQ_ORDERFLOW_API_URL and run the order flow server for live data.</i>"
-        )
-        return
-    await _reply_html(
-        update,
-        f"<b>📊 Order flow</b>\n"
-        f"────────────────────\n"
-        f"Strategy: <b>{label}</b>\n\n"
-        f"Entries {'require' if new_value else 'do not require'} order flow confirmation."
-    )
-
-
-async def cmd_orderflow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Order flow status: on/off and last summary if available."""
-    from config import ORDERFLOW_API_URL
-    effective = _effective_use_orderflow()
-    if not effective:
-        await _reply_html(
-            update,
-            "<b>📊 Order flow</b>\n"
-            "────────────────────\n"
-            "Strategy: <b>OFF</b> (entries do not require order flow).\n\n"
-            "Tap <b>📊 Order flow</b> to turn ON, or set <code>MNQ_USE_ORDERFLOW=true</code> and restart."
-        )
-        return
-    summary = _bot_state.get("last_orderflow_summary")
-    if not summary:
-        await _reply_html(
-            update,
-            "<b>📊 Order flow</b>\n"
-            "────────────────────\n"
-            f"<b>ON</b>  │  API <code>{_esc(ORDERFLOW_API_URL or '')}</code>\n"
-            "<i>No summary yet this session.</i>"
-        )
-        return
-    age = summary.get("age_seconds", 0)
-    imb = summary.get("imbalance_ratio", 0)
-    await _reply_html(
-        update,
-        "<b>📊 Order flow</b>\n"
-        "────────────────────\n"
-        f"<b>ON</b>  │  Age <code>{age:.0f}s</code>  │  Imbalance <code>{imb:.3f}</code>"
+        f"Trail mode <b>{_bot_state.get('trail_mode', 'alert')}</b>"
     )
 
 
@@ -1324,86 +1223,6 @@ async def cmd_ml(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _reply_html(update, f"<b>ML Filter:</b> {_esc(str(e))}")
 
 
-def _smart_money_sync() -> dict:
-    """Compute Smart Money Score (blocking, for executor)."""
-    try:
-        from strategy.smart_money import compute_smart_money_score
-        sm = compute_smart_money_score(force_refresh=True)
-        return {
-            "score": sm.score,
-            "bias": sm.bias,
-            "confidence": sm.confidence,
-            "options_bias": sm.options_bias,
-            "internals_bias": sm.internals_bias,
-            "premarket_bias": sm.premarket_bias,
-            "insider_bias": sm.insider_bias,
-            "institutional_bias": sm.institutional_bias,
-            "pcr": sm.pcr,
-            "components": sm.components,
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-async def cmd_smartmoney(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show current Smart Money Score with all components."""
-    logger.info("/smartmoney from user %s", update.effective_user.id if update.effective_user else "?")
-    await _reply_html(update, "<b>Computing Smart Money Score...</b>")
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _smart_money_sync)
-
-    if result.get("error"):
-        await _reply_html(update, f"<b>Smart Money Error:</b> {_esc(result['error'])}")
-        return
-
-    score = result["score"]
-    bias = result["bias"]
-    conf = result["confidence"]
-    pcr = result["pcr"]
-    components = result.get("components", {})
-
-    bias_emoji = {
-        "STRONG_BULL": "🟢🟢",
-        "BULL": "🟢",
-        "NEUTRAL": "⚪",
-        "BEAR": "🔴",
-        "STRONG_BEAR": "🔴🔴",
-    }.get(bias, "⚪")
-
-    def _bias_icon(b: str) -> str:
-        return {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "⚪"}.get(b, "⚪")
-
-    lines = [
-        "<b>🧠 Smart Money Score</b>",
-        "────────────────────",
-        f"Score  <b><code>{score:+.1f}</code></b>  {bias_emoji} <b>{bias.replace('_', ' ')}</b>",
-        f"Confidence  <code>{conf:.0%}</code>",
-        "",
-        "<b>Components</b>",
-        f"  {_bias_icon(result['options_bias'])} Options Flow  <code>{components.get('options', 0):+.0f}</code>  ({result['options_bias']})",
-        f"  {_bias_icon(result['internals_bias'])} Market Internals  <code>{components.get('internals', 0):+.0f}</code>  ({result['internals_bias']})",
-        f"  {_bias_icon(result['premarket_bias'])} Pre-Market Levels  <code>{components.get('premarket', 0):+.0f}</code>  ({result['premarket_bias']})",
-        f"  {'🟢' if pcr < 0.8 else '🔴' if pcr > 1.1 else '⚪'} Put/Call Ratio  <code>{pcr:.2f}</code>  <code>{components.get('pcr', 0):+.0f}</code>",
-        f"  {_bias_icon(result['insider_bias'])} Insider Filings  <code>{components.get('insider', 0):+.0f}</code>  ({result['insider_bias']})",
-        f"  {_bias_icon(result['institutional_bias'])} 13F Holdings  <code>{components.get('institutional', 0):+.0f}</code>  ({result['institutional_bias']})",
-        "",
-        "<b>Weights</b>",
-        "  Options 30% | Internals 25% | Pre-Market 20%",
-        "  P/C Ratio 10% | Insider 10% | 13F 5%",
-        "",
-    ]
-
-    if score > 20:
-        lines.append("<i>Scalp bias: prefer LONG entries</i>")
-    elif score < -20:
-        lines.append("<i>Scalp bias: prefer SHORT entries</i>")
-    else:
-        lines.append("<i>Scalp bias: no strong directional edge</i>")
-
-    lines.append(f"\n<i>Updated {now_est().strftime('%I:%M %p EST')}</i>")
-    await _reply_html(update, "\n".join(lines))
-
-
 async def cmd_instruments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show configured instruments."""
     from config import INSTRUMENTS, ACTIVE_INSTRUMENTS
@@ -1462,12 +1281,10 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
         "📌 Levels": cmd_levels,
         "📈 P&L": cmd_pnl,
         "📋 History": cmd_history,
-        "📊 Order flow": cmd_orderflow_toggle,
         "💰 Live Price": cmd_live_price,
         "🔌 APIs": cmd_apis,
         "📉 Chart": cmd_chart,
         "📈 Equity": cmd_equity,
-        "🧠 Smart Money": cmd_smartmoney,
         "🌡 VIX": cmd_vix,
         "🤖 ML": cmd_ml,
         "🌐 Dashboard": cmd_dashboard_info,
@@ -1597,7 +1414,6 @@ def register_commands(application):
     application.add_handler(CommandHandler("pnl", cmd_pnl))
     application.add_handler(CommandHandler("stats", cmd_stats))
     application.add_handler(CommandHandler("config", cmd_config))
-    application.add_handler(CommandHandler("orderflow", cmd_orderflow))
     application.add_handler(CommandHandler("apis", cmd_apis))
     application.add_handler(CommandHandler("nextretrain", cmd_nextretrain))
     application.add_handler(CommandHandler("version", cmd_version))
@@ -1619,7 +1435,6 @@ def register_commands(application):
     application.add_handler(CommandHandler("instruments", cmd_instruments))
     application.add_handler(CommandHandler("dashboard", cmd_dashboard_info))
     application.add_handler(CommandHandler("strategy", cmd_strategy))
-    application.add_handler(CommandHandler("smartmoney", cmd_smartmoney))
     application.add_handler(CommandHandler("reset", cmd_reset))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("pause", cmd_stop))

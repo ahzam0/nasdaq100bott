@@ -145,14 +145,16 @@ _yahoo_ws_singleton_lock = threading.Lock()
 def get_or_create_yahoo_ws_client(
     symbol: str = YAHOO_WS_SYMBOL,
     qqq_to_nq_ratio: float = DEFAULT_QQQ_TO_NQ_RATIO,
+    auto_start: bool = True,
 ) -> Optional[YahooWSClient]:
-    """Return the single shared Yahoo WebSocket client. Creates and starts it once."""
+    """Return the single shared Yahoo WebSocket client. When auto_start=True (default), starts immediately; when False, call start() when session begins."""
     global _yahoo_ws_singleton
     with _yahoo_ws_singleton_lock:
         if _yahoo_ws_singleton is not None:
             return _yahoo_ws_singleton
         client = YahooWSClient(symbol=symbol, qqq_to_nq_ratio=qqq_to_nq_ratio)
-        client.start()
+        if auto_start:
+            client.start()
         _yahoo_ws_singleton = client
     return client
 
