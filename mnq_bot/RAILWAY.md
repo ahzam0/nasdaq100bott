@@ -42,6 +42,7 @@ Your bot has token/chat ID in code, so it can run without these. To override or 
    | `TELEGRAM_BOT_TOKEN` | Your bot token |
    | `TELEGRAM_CHAT_ID` | Your chat ID (e.g. 8309667442) |
    | `CRON_SECRET` | e.g. mnqbotcron123 |
+   | `APP_BASE_URL` | (optional) Your app URL for auto webhook, e.g. `https://nasdaq100bott-production.up.railway.app` |
 
 ---
 
@@ -58,27 +59,24 @@ Your bot has token/chat ID in code, so it can run without these. To override or 
 
 ---
 
-## 5. Set the Telegram webhook (one click)
+## 5. Set the Telegram webhook
 
-**Easiest:** Open this URL in your browser (replace with your real Railway URL):
+**Auto on startup:** The app automatically sets the Telegram webhook when it starts (and again after any crash restart). Railway sets `RAILWAY_PUBLIC_DOMAIN`; if your URL is different, set **Variables** → `APP_BASE_URL` = `https://nasdaq100bott-production.up.railway.app` (your real app URL). No manual step needed after the first deploy.
 
+**Manual (if needed):** Open in browser:
 ```
 https://YOUR_RAILWAY_URL/set-webhook?secret=mnqbotcron123
 ```
+Example: [https://nasdaq100bott-production.up.railway.app/set-webhook?secret=mnqbotcron123](https://nasdaq100bott-production.up.railway.app/set-webhook?secret=mnqbotcron123)
 
-Example: if your app is `https://nasdaq100bott.up.railway.app`, open:
-`https://nasdaq100bott.up.railway.app/set-webhook?secret=mnqbotcron123`
-
-The page will show "Webhook set to https://...". No curl needed.
-
-**Optional – curl:**  
-`curl -F "url=YOUR_RAILWAY_URL/webhook" "https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/setWebhook"`
+The page will show "Webhook set to https://...".
 
 ---
 
-## 6. Scan every minute – automatic
+## 6. Crash restart and scan
 
-The app runs the scan every 60 seconds inside the process. No external cron needed—just deploy and visit `/set-webhook` once.
+- **Crash:** Railway restarts the process automatically if the app crashes. On restart, the webhook is set again so the bot keeps working.
+- **Scan:** The app runs the scan every 60 seconds inside the process. No external cron needed.
 
 ---
 

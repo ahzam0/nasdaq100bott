@@ -203,6 +203,24 @@ def settings_yahoo_ws():
     return redirect(f"/settings?secret={secret}")
 
 
+def _register_webhook_with_telegram(base_url: str) -> tuple[bool, str]:
+    """Register Telegram webhook at base_url/webhook. Returns (success, message)."""
+    if not TELEGRAM_BOT_TOKEN:
+        return False, "No TELEGRAM_BOT_TOKEN"
+    base = base_url.rstrip("/")
+    webhook_url = f"{base}/webhook"
+    try:
+        import urllib.request
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        req = urllib.request.Request(url, data=urllib.parse.urlencode({"url": webhook_url}).encode(), method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = r.read().decode()
+        return True, f"Webhook set to {webhook_url}\n{body}"
+    except Exception as e:
+        return False, str(e)
+
+
 @app.route("/set-webhook", methods=["GET"])
 def set_webhook_route():
     """Visit this URL once after deploy (e.g. https://your-app.up.railway.app/set-webhook?secret=mnqbotcron123)."""
@@ -213,14 +231,8 @@ def set_webhook_route():
         scheme = request.headers.get("X-Forwarded-Proto", request.scheme) or "https"
         host = request.headers.get("X-Forwarded-Host", request.host) or request.host
         base = f"{scheme}://{host}".rstrip("/")
-        webhook_url = f"{base}/webhook"
-        import urllib.request
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
-        req = urllib.request.Request(url, data=urllib.parse.urlencode({"url": webhook_url}).encode(), method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urllib.request.urlopen(req, timeout=10) as r:
-            body = r.read().decode()
-        return Response(f"Webhook set to {webhook_url}\n{body}", status=200, mimetype="text/plain")
+        ok, msg = _register_webhook_with_telegram(base)
+        return Response(msg, status=200 if ok else 500, mimetype="text/plain")
     except Exception as e:
         return Response(f"Error: {e}", status=500, mimetype="text/plain")
 
@@ -250,7 +262,26 @@ def _scheduler_loop():
 _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
 _scheduler_thread.start()
 
-# WSGI expects "application"
+
+def _auto_set_webhook_on_startup():
+    """Run once after a short delay: set Telegram webhook so bot works after deploy or crash restart."""
+    time.sleep(3)  # Let the server start and be reachable
+    base = os.getenv("APP_BASE_URL", "").strip()
+    if not base and os.getenv("RAILWAY_PUBLIC_DOMAIN"):
+        base = "https://" + os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if not base:
+        return
+    ok, msg = _register_webhook_with_telegram(base)
+    if ok:
+        print(f"[Startup] Telegram webhook auto-set: {base}/webhook")
+    else:
+        print(f"[Startup] Webhook auto-set failed: {msg}")
+
+
+_webhook_startup_thread = threading.Thread(target=_auto_set_webhook_on_startup, daemon=True)
+_webhook_startup_thread.start()
+
+# WSGI expects "application". Railway restarts the process on crash, then webhook is set again by _auto_set_webhook_on_startup.
 application = app
 
 if __name__ == "__main__":
