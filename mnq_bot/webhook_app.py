@@ -39,6 +39,17 @@ def get_ptb_app() -> Application:
     return _ptb_app
 
 
+async def _process_webhook_update(data: dict):
+    """Initialize PTB app, process update, shutdown. Required for webhook mode."""
+    ptb = get_ptb_app()
+    await ptb.initialize()
+    try:
+        update = Update.de_json(data, ptb.bot)
+        await ptb.process_update(update)
+    finally:
+        await ptb.shutdown()
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     """Receive Telegram updates and process with PTB."""
@@ -46,9 +57,7 @@ def webhook():
         data = request.get_json(force=True, silent=True)
         if not data:
             return Response("Bad request", status=400)
-        ptb = get_ptb_app()
-        update = Update.de_json(data, ptb.bot)
-        asyncio.run(ptb.process_update(update))
+        asyncio.run(_process_webhook_update(data))
         return Response("OK", status=200)
     except Exception as e:
         logger.exception("Webhook error: %s", e)
@@ -94,7 +103,39 @@ def _settings_secret_ok():
 
 @app.route("/")
 def index():
-    return "MNQ Bot webhook is running. Use /webhook for Telegram. Settings: /settings?secret=YOUR_CRON_SECRET", 200
+    return (
+        "MNQ Bot webhook is running. Use /webhook for Telegram. "
+        "Visit /set-webhook once after deploy to register with Telegram. "
+        "Settings: /settings?secret=YOUR_CRON_SECRET"
+    ), 200
+
+
+@app.route("/set-webhook", methods=["GET"])
+def set_webhook_route():
+    """Call once after deploy so Telegram sends updates to this server (e.g. https://your-app.com/set-webhook?secret=CRON_SECRET)."""
+    secret = os.environ.get("CRON_SECRET", "").strip()
+    if secret and request.args.get("secret") != secret:
+        return Response("Forbidden. Add ?secret=YOUR_CRON_SECRET", status=403)
+    try:
+        import urllib.request
+        import urllib.parse
+        scheme = request.headers.get("X-Forwarded-Proto", request.scheme) or "https"
+        host = request.headers.get("X-Forwarded-Host", request.host) or request.host
+        base = f"{scheme}://{host}".rstrip("/")
+        webhook_url = f"{base}/webhook"
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        req = urllib.request.Request(
+            url,
+            data=urllib.parse.urlencode({"url": webhook_url}).encode(),
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = r.read().decode()
+        return Response(f"Webhook set to {webhook_url}\n{body}", status=200, mimetype="text/plain")
+    except Exception as e:
+        logger.exception("Set webhook error: %s", e)
+        return Response(f"Error: {e}", status=500, mimetype="text/plain")
 
 
 @app.route("/settings", methods=["GET"])

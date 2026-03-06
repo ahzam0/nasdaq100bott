@@ -278,13 +278,13 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     strat = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
     if strat == "both":
-        strat_label = "📐+⚡ Both"
+        strat_label = "📐+⚡ Both (Trend + SMC)"
         effective_max = MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY
     elif strat == "scalp":
-        strat_label = "⚡ Scalp"
+        strat_label = "⚡ Scalp (Smart Money)"
         effective_max = SCALP_MAX_TRADES_PER_DAY
     else:
-        strat_label = "📐 Riley Coleman"
+        strat_label = "📐 Trend & Key Levels"
         effective_max = MAX_TRADES_PER_DAY
     lines = [
         f"<b>📊 {INSTRUMENT} Bot Status</b>",
@@ -991,7 +991,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>/version</code> – Bot version\n"
         "<code>/backtest [days]</code> – Run short backtest (default 2 days)\n\n"
         "<b>Advanced</b>\n"
-        "<code>/strategy</code> – Switch Riley / Scalp / Both\n"
+        "<code>/strategy</code> – Switch Trend/Levels / Scalp (SMC) / Both\n"
         "<code>/smartmoney</code> – Smart Money Score (6 sources)\n"
         "<code>/chart</code> – Live chart with key levels\n"
         "<code>/equity</code> – Equity curve chart + stats\n"
@@ -1448,14 +1448,13 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logger.info("/strategy from user %s", update.effective_user.id if update.effective_user else "?")
     current = _bot_state.get("active_strategy", ACTIVE_STRATEGY)
     if current == "both":
-        label = "📐+⚡ Both (Riley + Scalp)"
+        label = "📐+⚡ Both (Trend + Smart Money)"
         desc = (
-            "Runs BOTH strategies each scan cycle.\n"
-            "Riley Coleman checks first, then Scalp if no Riley setup.\n"
+            "Runs BOTH: Trend/key-level reversal first, then Scalp (SMC-style) if no setup.\n"
             f"Max trades/day: {MAX_TRADES_PER_DAY + SCALP_MAX_TRADES_PER_DAY} combined"
         )
     elif current == "scalp":
-        label = "⚡ Quick Scalp (Volume Flow + Smart Money)"
+        label = "⚡ Scalp — Smart Money / Volume Flow"
         rt_source = "Candle proxy (no API keys)"
         try:
             from data.realtime_collector import get_collector_manager
@@ -1478,16 +1477,16 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"Data: {rt_source}{sm_line}"
         )
     else:
-        label = "📐 Riley Coleman (Reversal)"
+        label = "📐 Trend & Key Levels (Riley Coleman)"
         desc = (
-            f"Max risk: {MAX_RISK_PER_TRADE_USD}  |  Max trades/day: {MAX_TRADES_PER_DAY}\n"
-            "Level-retest reversal with trend confirmation"
+            f"Max risk: ${MAX_RISK_PER_TRADE_USD:.0f}  |  Max trades/day: {MAX_TRADES_PER_DAY}\n"
+            "Key-level retest reversal with trend confirmation (200 EMA / structure)"
         )
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📐 Riley", callback_data="strategy_riley"),
-            InlineKeyboardButton("⚡ Scalp", callback_data="strategy_scalp"),
+            InlineKeyboardButton("📐 Trend/Levels", callback_data="strategy_riley"),
+            InlineKeyboardButton("⚡ Scalp (SMC)", callback_data="strategy_scalp"),
             InlineKeyboardButton("📐+⚡ Both", callback_data="strategy_both"),
         ]
     ])
@@ -1498,7 +1497,7 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"────────────────────\n"
         f"<b>{label}</b>\n\n"
         f"<code>{desc}</code>\n\n"
-        f"<i>Tap a button below to switch:</i>",
+        f"<i>Tap a button below to switch. Next scan uses the selected strategy.</i>",
         reply_markup=keyboard,
     )
 
@@ -1511,13 +1510,13 @@ async def callback_strategy_switch(update: Update, context: ContextTypes.DEFAULT
     data = query.data
     if data == "strategy_riley":
         new_strat = "riley"
-        label = "📐 Riley Coleman (Reversal)"
+        label = "📐 Trend & Key Levels (Riley Coleman)"
     elif data == "strategy_scalp":
         new_strat = "scalp"
-        label = "⚡ Quick Scalp (Volume Flow)"
+        label = "⚡ Scalp — Smart Money / Volume Flow"
     elif data == "strategy_both":
         new_strat = "both"
-        label = "📐+⚡ Both (Riley + Scalp)"
+        label = "📐+⚡ Both (Trend + Smart Money)"
     else:
         return
 

@@ -110,7 +110,13 @@ After this, the bot runs on Railway and sends live signals during **7–11 AM ES
 
 - **Build fails:** Ensure Root Directory is exactly `mnq_bot` and that `requirements.txt` and `Procfile` are in that folder.
 - **502 / App not starting:** Check the **Deploy** or **Logs** tab for errors. Ensure `gunicorn run_bot_pa:application` runs (Procfile).
-- **No reply in Telegram:** Confirm webhook:  
-  `https://api.telegram.org/bot8510793606:AAE553KsIe0E6rAskRN-fUqM0H57_UN92zY/getWebhookInfo`  
-  It should show your Railway URL.
+- **Bot not responding to buttons / commands:**  
+  1. **Set the webhook** – After every deploy, open in a browser:  
+     `https://YOUR_RAILWAY_URL/set-webhook?secret=YOUR_CRON_SECRET`  
+     (e.g. `.../set-webhook?secret=mnqbotcron123`). You must do this once so Telegram sends updates to your app.  
+  2. **Confirm webhook** – Open:  
+     `https://api.telegram.org/botYOUR_BOT_TOKEN/getWebhookInfo`  
+     It should show `"url": "https://YOUR_RAILWAY_URL/webhook"`.  
+  3. The Procfile uses **2 workers** so /webhook can be served while the scan runs; if you overrode the start command, keep at least 2 workers.
+- **No reply in Telegram:** Same as above: confirm webhook is set to your app URL (getWebhookInfo).
 - **Scans not running:** The app runs the scan every 60 seconds; check Railway logs for errors when the scheduler runs.
