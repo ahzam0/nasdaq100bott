@@ -1,0 +1,203 @@
+# NASDAQ Quantum Trading Bot — Production Config
+# All parameters here; zero magic numbers in code.
+
+project:
+  name: nasdaq-quantum-trading-bot
+  version: "1.0.0"
+  timezone: America/New_York
+
+# NASDAQ Trading Universe
+universe:
+  primary_etfs: [QQQ, TQQQ, SQQQ, QLD]
+  mega_cap: [AAPL, MSFT, NVDA, META, GOOGL, AMZN, TSLA, AVGO, ASML]
+  high_beta_tech: [AMD, SMCI, MSTR, PLTR, CRWD, SNOW, NET, DDOG, MDB]
+  semiconductors: [INTC, QCOM, AMAT, LRCX, KLAC, MRVL, TSM, ARM, MPWR]
+  ai_cloud: [MSFT, GOOGL, AMZN, ORCL, CRM, WDAY, NOW, ZS, PANW]
+  biotech: [AMGN, GILD, BIIB, REGN, VRTX, ILMN, MRNA, BMRN]
+  benchmark: QQQ
+  index_symbols: [NDX, COMP]
+  weekly_universe_size: 20
+  rebalance_weekday: 0  # Monday
+  min_market_cap_b: 5.0
+  min_avg_volume: 1_000_000
+  max_spread_pct: 0.05
+
+# NASDAQ Market Hours (ET)
+market_hours:
+  premarket_start: "04:00"
+  premarket_end: "09:30"
+  regular_start: "09:30"
+  regular_end: "16:00"
+  after_hours_end: "20:00"
+  power_hour_start: "15:00"
+  power_hour_end: "16:00"
+  first_30_min_end: "10:00"
+  lunch_start: "12:00"
+  lunch_end: "13:30"
+  no_new_entries_first_min: 30
+  lunch_reduce_pct: 0.5
+  power_hour_size_mult: 2.0
+
+# Performance Targets (all must be met for convergence)
+targets:
+  sharpe_ratio: 5.0
+  max_drawdown_pct: 5.0
+  win_rate_pct: 70.0
+  cagr_pct: 150.0
+  profit_factor: 3.0
+  sortino_ratio: 6.0
+  calmar_ratio: 4.0
+  annual_volatility_pct: 12.0
+  expectancy_per_r: 2.5
+  max_consecutive_losses: 3
+
+# Optimization Loop
+optimization:
+  max_iterations: 100_000
+  convergence_lookback: 500
+  sharpe_improvement_threshold: 0.001
+  cagr_improvement_threshold_pct: 0.1
+  dd_improvement_threshold_pct: 0.01
+  quantum_noise_after_stagnant: 100
+  circuit_depth_increase_after: 50
+  leaderboard_size: 100
+  log_every_n_iter: 100
+
+# Backtest
+backtest:
+  train_start: "2018-01-01"
+  train_end: "2022-12-31"
+  oos_start: "2023-01-01"
+  oos_end: "2024-12-31"
+  commission_per_dollar: 0.0
+  sec_fee_per_dollar_sold: 0.0000278
+  finra_taf_per_share: 0.000166
+  finra_taf_max: 8.30
+  min_tick: 0.01
+  borrow_cost_annual_pct: 2.0
+  pdt_max_day_trades: 3
+  pdt_lookback_days: 5
+  reg_t_margin_initial_pct: 50.0
+  reg_t_margin_maintenance_pct: 25.0
+  portfolio_margin_threshold: 100_000
+  kyle_lambda_slippage: 0.1
+  walk_forward_folds: 12
+  monte_carlo_shuffles: 10_000
+  oos_sharpe_ratio_min_pct_of_is: 80.0
+  min_regimes_profitable: 4
+  total_regimes: 5
+  covid_drawdown_max_pct: 15.0
+  march_2020_test: true
+  bear_2022_test: true
+
+# Data Pipeline
+data:
+  primary_source: polygon
+  fallback_order: [alpaca, yfinance, alpha_vantage]
+  timeframes: [1m, 5m, 15m, 1h, 1d, 1wk]
+  primary_intraday_tf: 5m
+  feature_lookback_days: 252
+  ema_periods: [9, 21, 50, 200]
+  vwap_bands_std: [1, 2, 3]
+  supertrend_params: [[10, 3], [7, 3]]
+  adx_period: 14
+  adx_trend_threshold: 25
+  rsi_periods: [2, 14]
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  stochastic_k: 14
+  stochastic_d: 3
+  roc_periods: [1, 3, 5, 10, 21]
+  atr_period: 14
+  bb_period: 20
+  bb_std: 2.0
+  keltner_period: 20
+  keltner_atr_mult: 1.5
+  rvol_avg_days: 20
+  rvol_signal_threshold: 1.5
+  iv_rank_lookback: 252
+  earnings_lookahead_days: 5
+  earnings_vol_universe_pct: 0.3
+
+# Quantum
+quantum:
+  max_qubits: 50
+  max_layers: 20
+  qaoa_initial_p: 2
+  encoding_types: [angle, amplitude, entanglement]
+  hamiltonian_weights_adaptive: true
+  pareto_front_size: 100
+  tunneling_trigger_iterations: 100
+  dwave_fallback: true
+
+# Strategies
+strategies:
+  momentum_qqq_ema: 21
+  momentum_rs_min_pct: 2.0
+  momentum_rvol_min: 1.5
+  orb_range_minutes: 15
+  orb_target_mult: 2.0
+  gap_min_pct: 2.0
+  gap_rvol_min: 3.0
+  rsi2_extreme_low: 10
+  rsi2_extreme_high: 90
+  rsi14_mean_reversion_low: 40
+  rsi14_mean_reversion_high: 60
+  vwap_atr_mult: 2.0
+  pairs_zscore_entry: 2.0
+  pairs_zscore_exit: 0.0
+  pairs_max_hold_days: 5
+  bb_squeeze_width_percentile: 5
+  week52_rvol_min: 2.0
+  flag_pole_min_pct: 3.0
+  flag_consolidation_bars: 3
+  flag_consolidation_max_pct: 0.5
+  ml_confidence_threshold: 0.65
+  ml_retrain_days: 5
+
+# Hit and Trail (40% monthly, 70% WR, good PF, lowest DD, min 1 trade/day)
+hit_and_trail:
+  take_profit_pct: 0.02
+  trailing_stop_pct: 0.01
+  target_monthly_return_pct: 40.0
+  target_win_rate_pct: 70.0
+  target_profit_factor: 2.0
+  min_trades_per_day: 1.0
+  rsi2_low: 10
+  rsi2_high: 90
+  atr_vwap_mult: 1.5
+  min_one_trade_per_day: true
+
+# Live Risk
+risk:
+  max_position_pct: 10.0
+  beta_min: 0.5
+  beta_max: 1.5
+  max_sector_pct: 40.0
+  max_correlation: 0.85
+  earnings_close_days_before: 2
+  vix_reduce_threshold: 30
+  vix_reduce_pct: 0.5
+  vix_halt_threshold: 40
+  qqq_circuit_breaker_pct: 3.0
+  daily_loss_limit_pct: 2.0
+  drawdown_halt_pct: 5.0
+  pdt_warn_at: 2
+  max_overnight_pct: 30.0
+  fomc_overnight_pct: 10.0
+
+# Execution
+execution:
+  limit_timeout_seconds: 5
+  power_hour_timeout_seconds: 2
+  twap_adv_pct: 0.005
+  iceberg_display_pct: 0.2
+  entry_tranches: 3
+
+# Logging
+logging:
+  level: INFO
+  structured: true
+  iteration_log: true
+  file: logs/nasdaq_bot.log
