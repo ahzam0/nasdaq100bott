@@ -803,17 +803,14 @@ async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _post_init(app: Application) -> None:
-    """Notify users on startup so they know the bot is online."""
+    """Notify users on startup with user-friendly dashboard (risk, P&L, win/loss, session)."""
+    from bot import format_welcome_message
+    welcome = "<b>🟢 Bot online</b>\n\n" + format_welcome_message()
     for cid in TELEGRAM_CHAT_IDS:
         try:
             await app.bot.send_message(
                 chat_id=cid,
-                    text=(
-                    "<b>✅ MNQ Bot Online</b>\n"
-                    "────────────────────\n"
-                    f"v2.3 │ Scanning {SCAN_SESSION_EST}\n"
-                    "Use buttons below or /help."
-                ),
+                text=welcome,
                 parse_mode="HTML",
             )
         except Exception:

@@ -203,6 +203,42 @@ def maybe_reset_daily():
 BOT_VERSION = "2.3.0"
 
 
+def format_welcome_message() -> str:
+    """User-friendly welcome/dashboard: risk, today's P&L, win/loss, session. Used for /start and bot startup."""
+    from config import SCAN_SESSION_EST
+    maybe_reset_daily()
+    state = _bot_state
+    risk = state.get("risk_per_trade", MAX_RISK_PER_TRADE_USD)
+    daily_pnl = state.get("daily_pnl", 0.0)
+    trades_today = state.get("trades_today", 0)
+    max_trades = MAX_TRADES_PER_DAY
+    active = state.get("active_trades", [])
+    history = state.get("trade_history", [])
+    winners = sum(1 for h in history if (h.get("pnl") or 0) > 0)
+    losers = len(history) - winners
+    total_pnl = sum(h.get("pnl", 0) for h in history)
+    wr = (100 * winners / len(history)) if history else 0
+    lines = [
+        "<b>✅ MNQ Riley Coleman Bot</b>",
+        "────────────────────",
+        "",
+        "<b>💰 Trading</b>",
+        f"  Risk per trade  <code>${risk:,.0f}</code>",
+        f"  Trades today    <code>{trades_today}</code> / {max_trades}",
+        f"  Daily P&L      <code>${daily_pnl:+,.0f}</code>",
+        f"  Open positions  <b>{len(active)}</b>",
+        "",
+        "<b>📊 All-time</b>",
+        f"  Wins / Losses   <b>{winners}</b> / <b>{losers}</b>  │  Win rate <b>{wr:.0f}%</b>",
+        f"  Total P&L      <code>${total_pnl:+,.0f}</code>",
+        "",
+        f"<b>🕐 Session</b>  {SCAN_SESSION_EST}",
+        "",
+        "<i>Use buttons below or </i><code>/help</code><i> for commands.</i>",
+    ]
+    return "\n".join(lines)
+
+
 def get_state():
     return _bot_state
 
@@ -237,10 +273,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _bot_state["scan_active"] = True
     await _reply_html(
         update,
-        "<b>✅ MNQ Riley Coleman Bot</b>\n"
-        "────────────────────\n"
-        "Scanning <b>ON</b> • Signals only 7:00–11:00 AM EST\n\n"
-        "Use buttons below or <code>/help</code> for commands.",
+        format_welcome_message(),
         reply_markup=get_main_keyboard(),
     )
 
