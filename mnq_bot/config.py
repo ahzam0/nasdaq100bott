@@ -14,13 +14,14 @@ try:
 except ImportError:
     pass
 
-# Paths
-DATA_DIR = BASE_DIR / "data"
+# Paths – use MNQ_DATA_DIR for persistent storage (e.g. Railway Volume) so restarts keep trade history & balance
+_data_dir = os.getenv("MNQ_DATA_DIR", "").strip()
+DATA_DIR = Path(_data_dir) if _data_dir else (BASE_DIR / "data")
 LOG_DIR = BASE_DIR / "logs"
 JOURNAL_PATH = BASE_DIR / "trade_journal.csv"
 DB_PATH = BASE_DIR / "mnq_bot_state.db"
-BOT_STATE_JSON = BASE_DIR / "data" / "bot_state.json"  # Persist risk, contracts
-TRADE_DATA_JSON = BASE_DIR / "data" / "trade_data.json"  # Persist trade history, active_trades, daily_pnl (survives restart)
+BOT_STATE_JSON = DATA_DIR / "bot_state.json"  # Persist risk, contracts
+TRADE_DATA_JSON = DATA_DIR / "trade_data.json"  # Persist trade history, active_trades, daily_pnl (survives restart)
 
 # Telegram (use env vars in production; never commit real tokens)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
@@ -40,6 +41,8 @@ TELEGRAM_CHAT_IDS = _telegram_chat_ids()
 # Trading – previous strategy (~40% monthly return, BACKTEST_3M_RESULT.md)
 INSTRUMENT = "MNQ"
 TICK_VALUE_USD = 2.0  # 1 point = $2/contract on MNQ
+# Starting balance for display (Balance = INITIAL_BALANCE + total P&L). Set MNQ_INITIAL_BALANCE or use /balance to set.
+INITIAL_BALANCE = float(os.getenv("MNQ_INITIAL_BALANCE", "50000").strip() or "50000")
 MAX_RISK_PER_TRADE_USD = 380
 MAX_DAILY_LOSS_USD = 760       # Allow room for 2 full losses per day
 DEFAULT_CONTRACTS = 1

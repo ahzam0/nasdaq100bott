@@ -43,6 +43,7 @@ Your bot has token/chat ID in code, so it can run without these. To override or 
    | `TELEGRAM_CHAT_ID` | Your chat ID (e.g. 8309667442) |
    | `CRON_SECRET` | e.g. mnqbotcron123 |
    | `APP_BASE_URL` | (optional) Your app URL for auto webhook, e.g. `https://nasdaq100bott-production.up.railway.app` |
+   | `MNQ_DATA_DIR` | (optional) Persistent data path, e.g. `/data` – set this when using a Volume so trade history & balance survive restarts |
 
 ---
 
@@ -73,14 +74,28 @@ The page will show "Webhook set to https://...".
 
 ---
 
-## 6. Crash restart and scan
+## 6. (Recommended) Keep trade history and balance across restarts
+
+By default, the app saves trade history and P&L to `data/trade_data.json`. On Railway the disk is **ephemeral**, so a redeploy or restart can wipe that file and you lose history/balance.
+
+To **persist** it:
+
+1. In your Railway service, open **Settings** → **Volumes** (or **Storage**).
+2. Click **Add Volume**, set mount path to **`/data`** (or e.g. `/app/data` if your app runs from `/app`).
+3. In **Variables**, add:
+   - **`MNQ_DATA_DIR`** = **`/data`** (must match the volume mount path exactly).
+4. Redeploy. The bot will write `trade_data.json` and `bot_state.json` under `/data`, so they survive restarts.
+
+After this, when you restart or redeploy, the bot will load previous trade history and balance from the volume.
+
+## 7. Crash restart and scan
 
 - **Crash:** Railway restarts the process automatically if the app crashes. On restart, the webhook is set again so the bot keeps working.
 - **Scan:** The app runs the scan every 60 seconds inside the process. No external cron needed.
 
 ---
 
-## 7. Test the bot
+## 8. Test the bot
 
 1. In Telegram, send **/start** or **/status** to your bot. You should get a reply.
 2. Visit **https://YOUR_RAILWAY_URL/** in a browser. You should see:  
@@ -97,8 +112,9 @@ The page will show "Webhook set to https://...".
 | 3 | (Optional) Added TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET |
 | 4 | Deployed and copied your **Railway URL** |
 | 5 | Opened **YOUR_RAILWAY_URL/set-webhook?secret=mnqbotcron123** in browser (webhook set automatically) |
-| 6 | No cron needed – app runs scan every 60 sec inside the process |
-| 7 | Tested with /start and the root URL |
+| 6 | (Optional) Added Volume + MNQ_DATA_DIR so trade history & balance survive restarts |
+| 7 | No cron needed – app runs scan every 60 sec inside the process |
+| 8 | Tested with /start and the root URL |
 
 After this, the bot runs on Railway and sends live signals during **7–11 AM EST**.
 

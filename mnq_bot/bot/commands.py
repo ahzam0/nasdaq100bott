@@ -63,6 +63,8 @@ def _load_persisted_state():
                 out["risk_per_trade"] = max(1, min(500, float(data["risk_per_trade"])))
             if isinstance(data.get("contracts"), int):
                 out["contracts"] = max(1, min(10, data["contracts"]))
+            if isinstance(data.get("initial_balance"), (int, float)) and float(data["initial_balance"]) > 0:
+                out["initial_balance"] = float(data["initial_balance"])
     except Exception as e:
         logger.debug("Could not load bot_state.json: %s", e)
     return out
@@ -78,13 +80,14 @@ def _save_persisted_state():
             json.dump({
                 "risk_per_trade": _bot_state.get("risk_per_trade"),
                 "contracts": _bot_state.get("contracts"),
+                "initial_balance": _bot_state.get("initial_balance"),
             }, f, indent=0)
     except Exception as e:
         logger.warning("Could not save bot_state.json: %s", e)
 
 
 def _load_trade_data():
-    """Load trade_history, active_trades, daily_pnl, trades_today from trade_data.json."""
+    """Load trade_history, active_trades, daily_pnl, trades_today, total_pnl from trade_data.json (survives restart)."""
     out = {}
     try:
         if not TRADE_DATA_JSON or not TRADE_DATA_JSON.exists():
@@ -101,6 +104,8 @@ def _load_trade_data():
             out["trades_today"] = max(0, data["trades_today"])
         if isinstance(data.get("last_trade_date"), str):
             out["last_trade_date"] = data["last_trade_date"]
+        if isinstance(data.get("total_pnl"), (int, float)):
+            out["total_pnl"] = float(data["total_pnl"])
         if isinstance(data.get("active_strategy"), str) and data["active_strategy"] == "riley":
             out["active_strategy"] = "riley"
         if isinstance(data.get("active_trades"), list):
@@ -123,13 +128,17 @@ def _load_trade_data():
                 except Exception as e:
                     logger.debug("Skip restoring active_trade %s: %s", i, e)
             out["active_trades"] = restored
+        n_hist = len(out.get("trade_history", []))
+        if n_hist > 0 or out.get("active_trades"):
+            logger.info("Restored from %s: %d trades in history, daily_pnl=$%.0f, %d open positions",
+                        TRADE_DATA_JSON.name, n_hist, out.get("daily_pnl", 0), len(out.get("active_trades", [])))
     except Exception as e:
         logger.debug("Could not load trade_data.json: %s", e)
     return out
 
 
 def save_trade_state():
-    """Persist trade_history, active_trades, daily_pnl, trades_today to trade_data.json. Call after any trade change."""
+    """Persist trade_history, active_trades, daily_pnl, trades_today, total_pnl to trade_data.json. Call after any trade change."""
     try:
         if not TRADE_DATA_JSON:
             return
@@ -137,6 +146,8 @@ def save_trade_state():
         import json
         from strategy.trade_manager import active_trade_to_dict
         active = _bot_state.get("active_trades") or []
+        history = _bot_state.get("trade_history") or []
+        total_pnl = sum(h.get("pnl", 0) for h in history)
         serialized_active = []
         for item in active:
             if isinstance(item, dict) and "trade" in item:
@@ -149,15 +160,17 @@ def save_trade_state():
                     "trade": active_trade_to_dict(t),
                 })
         payload = {
-            "trade_history": _bot_state.get("trade_history") or [],
+            "trade_history": history,
             "active_trades": serialized_active,
             "daily_pnl": _bot_state.get("daily_pnl", 0.0),
             "trades_today": _bot_state.get("trades_today", 0),
             "last_trade_date": _bot_state.get("last_trade_date", ""),
+            "total_pnl": total_pnl,
             "active_strategy": "riley",
         }
         with open(TRADE_DATA_JSON, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
+        _bot_state["total_pnl"] = total_pnl  # keep in-memory in sync
     except Exception as e:
         logger.warning("Could not save trade_data.json: %s", e)
 
@@ -176,14 +189,19 @@ _bot_state = {
     "trade_history": [],
     "total_scans": 0,
     "last_trade_date": "",
+    "total_pnl": 0.0,
+    "initial_balance": None,  # None = use config INITIAL_BALANCE; set via /balance
     "active_strategy": ACTIVE_STRATEGY,
 }
 # Load persisted risk/contracts
 for k, v in _load_persisted_state().items():
     _bot_state[k] = v
-# Load persisted trade data (history + active trades + daily_pnl + trades_today)
+# Load persisted trade data (history + active trades + daily_pnl + total_pnl – survives restart)
 for k, v in _load_trade_data().items():
     _bot_state[k] = v
+# Keep total_pnl in sync if we had history but no total_pnl in file
+if _bot_state.get("trade_history") and _bot_state.get("total_pnl", 0) == 0:
+    _bot_state["total_pnl"] = sum(h.get("pnl", 0) for h in _bot_state["trade_history"])
 
 
 def maybe_reset_daily():
@@ -204,8 +222,8 @@ BOT_VERSION = "2.3.0"
 
 
 def format_welcome_message() -> str:
-    """User-friendly welcome/dashboard: risk, today's P&L, win/loss, session. Used for /start and bot startup."""
-    from config import SCAN_SESSION_EST
+    """User-friendly welcome/dashboard: balance, risk, today's P&L, win/loss, session. Used for /start and bot startup."""
+    from config import SCAN_SESSION_EST, INITIAL_BALANCE
     maybe_reset_daily()
     state = _bot_state
     risk = state.get("risk_per_trade", MAX_RISK_PER_TRADE_USD)
@@ -216,13 +234,21 @@ def format_welcome_message() -> str:
     history = state.get("trade_history", [])
     winners = sum(1 for h in history if (h.get("pnl") or 0) > 0)
     losers = len(history) - winners
-    total_pnl = sum(h.get("pnl", 0) for h in history)
+    total_pnl = state.get("total_pnl")
+    if total_pnl is None:
+        total_pnl = sum(h.get("pnl", 0) for h in history)
     wr = (100 * winners / len(history)) if history else 0
+    # Live account balance = starting balance + all-time P&L
+    initial = state.get("initial_balance")
+    if initial is None or initial <= 0:
+        initial = INITIAL_BALANCE
+    current_balance = initial + total_pnl
     lines = [
         "<b>✅ MNQ Riley Coleman Bot</b>",
         "────────────────────",
         "",
-        "<b>💰 Trading</b>",
+        "<b>💰 Balance & Trading</b>",
+        f"  <b>Balance</b>       <code>${current_balance:,.0f}</code>",
         f"  Risk per trade  <code>${risk:,.0f}</code>",
         f"  Trades today    <code>{trades_today}</code> / {max_trades}",
         f"  Daily P&L      <code>${daily_pnl:+,.0f}</code>",
@@ -234,7 +260,7 @@ def format_welcome_message() -> str:
         "",
         f"<b>🕐 Session</b>  {SCAN_SESSION_EST}",
         "",
-        "<i>Use buttons below or </i><code>/help</code><i> for commands.</i>",
+        "<i>Use buttons below or </i><code>/help</code><i> for commands. Set balance: </i><code>/balance 72000</code>",
     ]
     return "\n".join(lines)
 
@@ -848,6 +874,38 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set or show starting balance. Live balance = starting + total P&L."""
+    from config import INITIAL_BALANCE
+    if context.args and context.args[0].replace(".", "").replace(",", "").isdigit():
+        amt = float(context.args[0].replace(",", ""))
+        if amt < 100 or amt > 99_999_999:
+            await _reply_html(update, "Balance must be between 100 and 99,999,999.")
+            return
+        _bot_state["initial_balance"] = amt
+        _save_persisted_state()
+        total_pnl = _bot_state.get("total_pnl") or sum(h.get("pnl", 0) for h in _bot_state.get("trade_history", []))
+        current = amt + total_pnl
+        await _reply_html(
+            update,
+            f"✅ Starting balance set to <b>${amt:,.0f}</b>\n\n"
+            f"<b>Live balance</b> (start + P&L): <code>${current:,.0f}</code>"
+        )
+    else:
+        initial = _bot_state.get("initial_balance") or INITIAL_BALANCE
+        total_pnl = _bot_state.get("total_pnl") or sum(h.get("pnl", 0) for h in _bot_state.get("trade_history", []))
+        current = initial + total_pnl
+        await _reply_html(
+            update,
+            f"<b>💰 Balance</b>\n"
+            "────────────────────\n"
+            f"Starting  <code>${initial:,.0f}</code>\n"
+            f"Total P&L <code>${total_pnl:+,.0f}</code>\n"
+            f"<b>Live balance</b>  <code>${current:,.0f}</code>\n\n"
+            "Set starting balance: <code>/balance 72000</code>"
+        )
+
+
 async def cmd_risk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args and context.args[0].replace(".", "").isdigit():
         amt = float(context.args[0])
@@ -970,6 +1028,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🔌 <b>APIs</b> – All APIs status (price, calendar)\n\n"
         "<b>Settings</b>\n"
         "<code>/config</code> – Current settings\n"
+        "<code>/balance [amount]</code> – Set starting balance (live balance = start + P&L)\n"
         "<code>/risk [amount]</code> – Max $ per trade\n"
         "<code>/contracts [n]</code> – MNQ contracts\n"
         "<code>/session on|off</code> – Session scan\n"
@@ -1453,6 +1512,7 @@ def register_commands(application):
     application.add_handler(CommandHandler("weekly", cmd_weekly))
     application.add_handler(CommandHandler("monthly", cmd_monthly))
     application.add_handler(CommandHandler("backtest", cmd_backtest))
+    application.add_handler(CommandHandler("balance", cmd_balance))
     application.add_handler(CommandHandler("risk", cmd_risk))
     application.add_handler(CommandHandler("contracts", cmd_contracts))
     application.add_handler(CommandHandler("session", cmd_session))
